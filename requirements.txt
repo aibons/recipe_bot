@@ -2,3 +2,4 @@ openai==1.78.1
 python-dotenv==1.1.0
 python-telegram-bot==22.0
 yt-dlp==2025.4.30
+aiohttp==3.9.5
