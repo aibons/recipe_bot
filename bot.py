@@ -50,6 +50,8 @@ TOKEN          = os.environ["TELEGRAM_TOKEN"]
 OPENAI_KEY     = os.environ["OPENAI_API_KEY"]
 PROVIDER_TOKEN = os.getenv("YOOKASSA_TOKEN", "")
 IG_SESSIONID   = os.getenv("IG_SESSIONID", "")
+TT_SESSIONID   = os.getenv("TT_SESSIONID", "")
+YT_COOKIES     = os.getenv("YT_COOKIES_FILE", "")
 
 openai.api_key = OPENAI_KEY
 
