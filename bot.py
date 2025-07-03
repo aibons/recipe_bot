@@ -166,16 +166,17 @@ def aio_app() -> web.Application:
 def main() -> None:
     init_db()
 
-    app = Application.builder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
+application = Application.builder().token(TOKEN).build()
+application.add_handler(CommandHandler("start", cmd_start))
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 
-    # run_polling  ➜ запускает long-poll-петлю + aiohttp-сервер
-    app.run_polling(
-        allowed_updates=["message"],
-        stop_signals=(2, 15),                 # SIGINT / SIGTERM
-        close_loop=False,
-        read_timeout=20,
-    )
+# run_polling  ➜ запускает long-poll-петлю + aiohttp-сервер
+application.run_polling(
+    allowed_updates=[UpdateType.MESSAGE],  # или allowed_updates=UpdateType.MESSAGE
+    stop_signals=(2, 15),                  # Ctrl-C / SIGTERM
+    timeout=20,                            # длина long-poll-запроса
+    web_app=aio_app(),                     # health-check на :8080
+)
+
 if __name__ == "__main__":
     main()
