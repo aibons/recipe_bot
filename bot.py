@@ -294,10 +294,13 @@ async def main():
         app.add_handler(PreCheckoutQueryHandler(prechk))
         app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, paid))
 
-    await app.initialize()
-    await app.start()
-    app.updater.start_polling()                     # long-polling
-    await web._run_app(aio_app(), host="0.0.0.0", port=8080)
+    # ───── START (правильный порядок + poll) ─────
+    await app.initialize()                           # 1) подготовка
+    await asyncio.gather(                           # 2) параллельно:
+        app.start(),                                #   • запускаем Application
+        app.updater.start_polling(),                #   • запускаем long-polling  ✅
+        web._run_app(aio_app(), host="0.0.0.0", port=8080),  #   • health-сервер
+    )
 
 if __name__ == "__main__":
     asyncio.run(main())
