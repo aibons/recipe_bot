@@ -163,20 +163,22 @@ def aio_app() -> web.Application:
     app = web.Application(); app.add_routes([web.get("/", hello)]); return app
 
 # ── main ───────────────────────────────────────────────────────────────────
-def main() -> None:
+async def main() -> None:
     init_db()
 
-application = Application.builder().token(TOKEN).build()
-application.add_handler(CommandHandler("start", cmd_start))
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
+    app = Application.builder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
+
+    await app.initialize()          # 1. подготовить Application
+    await asyncio.gather(           # 2. запустить две корутины параллельно
+        app.start(),               #    – long-poll loop
+        web._run_app(aio_app(),    #    – aiohttp server на :8080
+                     host="0.0.0.0",
+                     port=8080),
+    )
 
 # run_polling  ➜ запускает long-poll-петлю + aiohttp-сервер
-application.run_polling(
-    allowed_updates=[UpdateType.MESSAGE],  # или allowed_updates=UpdateType.MESSAGE
-    stop_signals=(2, 15),                  # Ctrl-C / SIGTERM
-    timeout=20,                            # длина long-poll-запроса
-    web_app=aio_app(),                     # health-check на :8080
-)
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
