@@ -34,6 +34,12 @@ from telegram.ext import (
     filters,
 )
 import openai
+# ─────────────── ЛОГГЕР (добавь эти две строки) ────────────────
+import logging
+logging.basicConfig(level=logging.INFO,
+                    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+
+# _______________________________________________________________
 
 # ──────────────────────────── Константы и env ──────────────────────────────
 load_dotenv()
