@@ -120,18 +120,52 @@ def extract_audio(src: Path, dst: Path) -> bool:
 
 # ─────────── загрузка видео ───────────
 def download(url: str) -> tuple[Path, dict]:
-    fmts = ["bestvideo[height<=720]+bestaudio/best[height<=720]", "best[height<=720]", "best"]
+    """
+    Скачивает ролик (Instagram / TikTok / YouTube-Shorts) и возвращает
+    (Path к файлу, meta-info).  Использует cookie-файлы, если нужны.
+    """
     opts = YDL_BASE.copy()
-    if IG_SESSIONID:
-        opts["cookiesfrombrowser"] = f".instagram.com\tTRUE\t/\tFALSE\t0\tsessionid\t{IG_SESSIONID}\n"
+
+    # ── подхватываем cookie-файлы ──────────────────────────────────
+    if IG_SESSIONID and "instagram.com" in url:
+        ck = Path("ig_cookie.txt")
+        if not ck.exists():
+            ck.write_text(
+                f".instagram.com\tTRUE\t/\tFALSE\t0\tsessionid\t{IG_SESSIONID}\n"
+            )
+        opts["cookiefile"] = str(ck)
+
+    if TT_SESSIONID and "tiktok.com" in url:
+        ck = Path("tt_cookie.txt")
+        if not ck.exists():
+            ck.write_text(
+                f".tiktok.com\tTRUE\t/\tFALSE\t0\ttt_session_id\t{TT_SESSIONID}\n"
+            )
+        opts["cookiefile"] = str(ck)
+
+    if YT_COOKIES and ("youtu.be" in url or "youtube.com" in url):
+        opts["cookiefile"] = YT_COOKIES
+
+    # ── ускоряем скачивание, если есть aria2c ─────────────────────
+    if shutil.which("aria2c"):
+        opts["external_downloader"] = "aria2c"
+        opts["external_downloader_args"] = ["-x", "8", "-k", "1M"]
+
+    fmts = [
+        "bestvideo[height<=720]+bestaudio/best[height<=720]",
+        "best[height<=720]",
+        "best",
+    ]
+    last_err = None
     for f in fmts:
         try:
             with YoutubeDL({**opts, "format": f}) as ydl:
                 info = ydl.extract_info(url, download=True)
                 return Path(ydl.prepare_filename(info)), info
-        except DownloadError:
+        except DownloadError as e:
+            last_err = e
             continue
-    raise RuntimeError("Не смог скачать видео")
+    raise RuntimeError(f"Не смог скачать видео: {last_err}")
 
 # ─────────── форматирование MarkdownV2 ───────────
 EMOJI = {"лимон": "🍋", "кекс": "🧁", "крыл": "🍗", "бургер": "🍔",
