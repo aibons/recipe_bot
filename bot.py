@@ -175,7 +175,7 @@ def main() -> None:
         allowed_updates=UpdateType.MESSAGE,
         stop_signals=(2, 15),                 # SIGINT / SIGTERM
         close_loop=False,
-        polling_timeout=20,
+        read_timeout=20,
         web_app=aio_app(),                    # health-check на :8080
     )
 
