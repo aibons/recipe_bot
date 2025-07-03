@@ -172,12 +172,10 @@ def main() -> None:
 
     # run_polling  ➜ запускает long-poll-петлю + aiohttp-сервер
     app.run_polling(
-        allowed_updates=UpdateType.MESSAGE,
+        allowed_updates=["message"],
         stop_signals=(2, 15),                 # SIGINT / SIGTERM
         close_loop=False,
         read_timeout=20,
-        web_app=aio_app(),                    # health-check на :8080
     )
-
 if __name__ == "__main__":
     main()
