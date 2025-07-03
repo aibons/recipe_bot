@@ -377,12 +377,13 @@ async def main() -> None:
         app.add_handler(PreCheckoutQueryHandler(precheckout))
         app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, paid))
 
-    # ----- START -----
-    await app.initialize()     # важно: сначала initialize
-    await asyncio.gather(
-        app.start(),           # long-polling
-        web._run_app(aio_app(), host="0.0.0.0", port=8080),  # healthcheck
-    )
+   # ----- START -----
+await app.initialize()          # 1. подготовка
+await app.start()               # 2. запускаем Application
+await app.updater.start_polling()   # 3. начинаем long-polling
+
+# aiohttp healthcheck идёт параллельно
+await web._run_app(aio_app(), host="0.0.0.0", port=8080)
 
 if __name__ == "__main__":
     asyncio.run(main())
