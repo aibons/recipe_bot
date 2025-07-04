@@ -178,7 +178,7 @@ async def main() -> None:
 
     # polling
     await application.initialize()
-    await application.start(
+    await application.updater.start_polling(
         allowed_updates=[constants.UpdateType.MESSAGE],
         drop_pending_updates=True,
     )
