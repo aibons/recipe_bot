@@ -363,10 +363,18 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         # Скачиваем видео
         video_path, video_info = await download_video(url)
 
+        # Явный лог, если video_path или video_info отсутствуют
         if not video_path or not video_path.exists():
+            log.error(f"Download failed or file does not exist for url: {url}")
             await update.message.reply_text("❌ Не удалось скачать видео. Возможно, оно приватное или требует аутентификацию.")
             # Отправляем рецепт с сообщением об ошибке, чтобы был фидбек
             recipe = "🤖 Не удалось скачать видео. Попробуйте другую ссылку."
+            await update.message.reply_text(recipe, parse_mode=constants.ParseMode.MARKDOWN)
+            return
+        if not video_info:
+            log.error(f"Download returned no video_info for url: {url}")
+            await update.message.reply_text("❌ Не удалось получить информацию о видео. Возможно, оно приватное или требует аутентификацию.")
+            recipe = "🤖 Не удалось получить информацию о видео. Попробуйте другую ссылку."
             await update.message.reply_text(recipe, parse_mode=constants.ParseMode.MARKDOWN)
             return
 
@@ -400,11 +408,18 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             duration=str(int(video_info.get("duration", 0))) + " сек." if video_info and "duration" in video_info else ""
         )
 
-        # Пробуем извлечь рецепт — но если ошибка, используем fallback_md
+        # Пробуем извлечь рецепт — если ошибка или текст невалиден, используем fallback_md
         try:
             recipe = await extract_recipe_from_video(video_info)
+            log.info(f"Extracted recipe raw:\n{recipe}")
             blocks = parse_recipe_blocks(recipe)
-            if not (blocks["title"] or blocks["ingredients"] or blocks["steps"] or blocks["extra"]):
+            # Если текст пустой, или только с ошибкой — шлем fallback шаблон
+            invalid = (
+                not recipe or recipe.strip().startswith("🤖")
+                or not (blocks["title"] or blocks["ingredients"] or blocks["steps"])
+            )
+            if invalid:
+                # fallback_md отправляется в случае ошибок или неосмысленного ответа
                 md = fallback_md
             else:
                 md = format_recipe_markdown(
@@ -414,7 +429,7 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
                 )
         except Exception as err:
             log.error(f"Ошибка извлечения рецепта: {err}")
-            md = fallback_md
+            md = fallback_md  # Всегда fallback по шаблону!
 
         await update.message.reply_text(
             md,
