@@ -177,8 +177,9 @@ async def main() -> None:
     await site.start()
 
     # polling
-    # запускаем приложение (инициализация и long‑polling внутри)
+    await application.initialize()
     await application.start()
+    await application.updater.start_polling()
 
     try:
         await asyncio.Event().wait()      # держим процесс живым
