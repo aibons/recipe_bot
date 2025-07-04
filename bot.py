@@ -16,6 +16,11 @@ import textwrap
 import tempfile
 import os
 from pathlib import Path
+
+print("=== FILES IN CURRENT DIR ===")
+for file in Path(".").glob("*"):
+    print(file)
+print("============================")
 from urllib.parse import urlparse
 from typing import Optional, Tuple
 
