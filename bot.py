@@ -170,22 +170,22 @@ def aio_app() -> web.Application:
 async def main() -> None:
     init_db()
 
+    # --- Telegram application ----------------------------------------
     application = (
         Application.builder()
         .token(TOKEN)
         .build()
     )
-
     application.add_handler(CommandHandler("start", cmd_start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 
-    # health-check runner (aiohttp) ------------------------------------------------
+    # --- AIOHTTP health-check ----------------------------------------
     runner = web.AppRunner(aio_app())
     await runner.setup()
     site = web.TCPSite(runner, host="0.0.0.0", port=8080)
     await site.start()
 
-    # Telegram polling ------------------------------------------------------------
+    # --- polling ------------------------------------------------------
     await application.initialize()
     await application.start()
     await application.updater.start_polling(
@@ -193,13 +193,13 @@ async def main() -> None:
         drop_pending_updates=True,
     )
 
-    # работаем, пока не прервут
-    await application.updater.wait()
-
-    # graceful shutdown ------------------------------------------------------------
-    await application.stop()
-    await application.shutdown()
-    await runner.cleanup()
+    # держим приложение живым
+    try:
+        await asyncio.Event().wait()          # ← тут “бесконечный сон”
+    finally:                                  # плавное выключение
+        await application.stop()
+        await application.shutdown()
+        await runner.cleanup()
 
 
 if __name__ == "__main__":
