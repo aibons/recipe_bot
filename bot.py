@@ -44,9 +44,6 @@ if not TOKEN:
 if not OPENAI_API_KEY:
     raise ValueError("OPENAI_API_KEY environment variable is required")
 
-# Настройка OpenAI
-openai.api_key = OPENAI_API_KEY
-
 # Cookie файлы (опционально)
 IG_COOKIES_FILE = os.getenv("IG_COOKIES_FILE", "")
 TT_COOKIES_FILE = os.getenv("TT_COOKIES_FILE", "")
@@ -178,14 +175,18 @@ async def extract_recipe_from_video(video_info: dict) -> str:
         Если рецепта нет, просто напиши "В этом видео нет рецепта."
         """
         
-        response = await openai.ChatCompletion.acreate(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": "Ты помощник, который извлекает рецепты из описаний видео. Отвечай на русском языке."},
-                {"role": "user", "content": prompt}
-            ],
-            max_tokens=1000,
-            temperature=0.7
+        client = openai.OpenAI(api_key=OPENAI_API_KEY)
+        response = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": "Ты помощник, который извлекает рецепты из описаний видео. Отвечай на русском языке."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=1000,
+                temperature=0.7
+            )
         )
         
         recipe = response.choices[0].message.content.strip()

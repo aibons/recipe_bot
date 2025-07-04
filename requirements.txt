@@ -3,4 +3,3 @@ yt-dlp>=2023.12.30
 aiohttp>=3.8.0
 python-dotenv>=1.0.0
 openai>=1.0.0
-sqlite3
