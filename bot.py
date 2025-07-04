@@ -81,13 +81,25 @@ YDL_OPTS = {
     "outtmpl": "%(title)s.%(ext)s",
 }
 
+def yt_opts(url: str) -> dict:
+    """Return per‑URL yt‑dlp options (adds cookies for Instagram, etc.)."""
+    opts = dict(
+        format="mp4",
+        outtmpl="%(id)s.%(ext)s",
+        # для Instagram подставляем cookies, иначе ключ не нужен
+        cookies=Path(os.getenv("IG_COOKIES_FILE", "")).expanduser()
+                if "instagram.com" in url else None,
+    )
+    # убираем пары с пустыми значениями
+    return {k: v for k, v in opts.items() if v}
+
 async def download(url: str) -> tuple[Path, dict]:
     """скачиваем ролик в tmp-директорию, возвращаем путь и info.json"""
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _sync_download, url)
 
 def _sync_download(url: str) -> tuple[Path, dict]:
-    with YoutubeDL(YDL_OPTS) as ydl:
+    with YoutubeDL(yt_opts(url)) as ydl:
         info = ydl.extract_info(url, download=True)
         return Path(ydl.prepare_filename(info)), info
 
@@ -99,8 +111,8 @@ WELCOME = escape_markdown(textwrap.dedent(
     Бесплатно доступно *6* роликов\.
     Тарифы \(скоро\):
 
-    • 10 роликов — 49 ₹  
-    • 200 роликов + 30 дн\. — 199 ₹  
+    • 10 роликов — 49 ₽  
+    • 200 роликов + 30 дн\. — 199 ₽  
 
     Пришлите ссылку на Reels / Shorts / TikTok, а остальное я сделаю сам\!
     """
