@@ -194,7 +194,7 @@ async def main() -> None:
     )
 
     # работаем, пока не прервут
-    await application.updater.idle()
+    await application.updater.wait()
 
     # graceful shutdown ------------------------------------------------------------
     await application.stop()
