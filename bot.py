@@ -41,6 +41,7 @@ from telegram.ext import (
     Application, ContextTypes,
     CommandHandler, MessageHandler, filters,
 )
+from telegram.ext.webhookhandler import WebhookRequestHandler
 # ENV
 load_dotenv()
 
@@ -363,7 +364,7 @@ def create_web_app(application: Application) -> web.Application:
     app = web.Application()
     app.router.add_get("/", health_check)
     app.router.add_get("/health", health_check)
-    app.router.add_post("/", application.webhook_update)
+    app.router.add_post("/", WebhookRequestHandler(application))
     return app
 
 async def main() -> None:
