@@ -300,11 +300,17 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         
         # Отправляем видео с рецептом
         await update.message.chat.send_action(constants.ChatAction.UPLOAD_VIDEO)
-        
+
+        from telegram.helpers import escape_markdown
+
+        caption = recipe[:1024]
+        if recipe.startswith("📝"):
+            caption = escape_markdown(caption, version=2)
+
         with open(video_path, 'rb') as video_file:
             await update.message.reply_video(
                 video=video_file,
-                caption=recipe[:1024],  # Telegram лимит для caption
+                caption=caption,
                 parse_mode=constants.ParseMode.MARKDOWN_V2 if recipe.startswith("📝") else None
             )
         
