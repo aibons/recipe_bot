@@ -362,63 +362,73 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         # Скачиваем видео
         video_path, video_info = await download_video(url)
-        
+
         if not video_path or not video_path.exists():
             await update.message.reply_text("❌ Не удалось скачать видео. Возможно, оно приватное или требует аутентификацию.")
             # Отправляем рецепт с сообщением об ошибке, чтобы был фидбек
             recipe = "🤖 Не удалось скачать видео. Попробуйте другую ссылку."
             await update.message.reply_text(recipe, parse_mode=constants.ParseMode.MARKDOWN)
             return
-        
+
         # Проверяем размер файла (Telegram лимит 50MB)
         file_size = video_path.stat().st_size
         if file_size > 50 * 1024 * 1024:  # 50MB
             await update.message.reply_text("❌ Видео слишком большое для отправки (максимум 50MB).")
             video_path.unlink(missing_ok=True)
-            # Отправляем рецепт с сообщением об ошибке, чтобы был фидбек
             recipe = "🤖 Видео слишком большое для отправки. Попробуйте другое видео."
             await update.message.reply_text(recipe, parse_mode=constants.ParseMode.MARKDOWN)
             return
-        
-        # Извлекаем рецепт
-        recipe = await extract_recipe_from_video(video_info)
-        
-        # Отправляем видео без длинного caption
+
+        # Отправляем видео СРАЗУ (caption пустой, текст отдельным сообщением)
         with open(video_path, 'rb') as video_file:
             await update.message.reply_video(
                 video=video_file,
                 caption="",  # Caption пустой или максимум короткое название
                 parse_mode=None
             )
-        
-        # Разбить рецепт на секции
-        blocks = parse_recipe_blocks(recipe)
-        if not (blocks["title"] or blocks["ingredients"] or blocks["steps"] or blocks["extra"]):
-            # fallback — просто экранируем оригинальный текст
-            md = escape_markdown_v2(recipe)
-        else:
-            md = format_recipe_markdown(
-                blocks,
-                original_url=video_info.get("webpage_url", url) if video_info else url,
-                duration=str(int(video_info.get("duration", 0))) + " сек." if video_info and "duration" in video_info else ""
-            )
+
+        # Сначала формируем красивый fallback на случай любой ошибки
+        fallback_blocks = {
+            "title": video_info.get("title", "Не удалось извлечь рецепт").strip() if video_info else "Не удалось извлечь рецепт",
+            "ingredients": [],
+            "steps": [],
+            "extra": "🤖 Не удалось извлечь рецепт из видео. Попробуйте самостоятельно посмотреть описание ролика или текст под видео."
+        }
+        fallback_md = format_recipe_markdown(
+            fallback_blocks,
+            original_url=video_info.get("webpage_url", url) if video_info else url,
+            duration=str(int(video_info.get("duration", 0))) + " сек." if video_info and "duration" in video_info else ""
+        )
+
+        # Пробуем извлечь рецепт — но если ошибка, используем fallback_md
+        try:
+            recipe = await extract_recipe_from_video(video_info)
+            blocks = parse_recipe_blocks(recipe)
+            if not (blocks["title"] or blocks["ingredients"] or blocks["steps"] or blocks["extra"]):
+                md = fallback_md
+            else:
+                md = format_recipe_markdown(
+                    blocks,
+                    original_url=video_info.get("webpage_url", url) if video_info else url,
+                    duration=str(int(video_info.get("duration", 0))) + " сек." if video_info and "duration" in video_info else ""
+                )
+        except Exception as err:
+            log.error(f"Ошибка извлечения рецепта: {err}")
+            md = fallback_md
 
         await update.message.reply_text(
             md,
             parse_mode=constants.ParseMode.MARKDOWN_V2,
             disable_web_page_preview=True,
         )
-        
+
         # Увеличиваем счетчик использования
         if uid != OWNER_ID:
             increment_quota(uid)
-        
+
         # Удаляем временный файл
         video_path.unlink(missing_ok=True)
-        
-        # После отправки видео, отправить рецепт отдельно (дублируется выше, но если нужно еще раз, можно удалить этот комментарий)
-        # await update.message.reply_text(md, parse_mode=constants.ParseMode.MARKDOWN)
-        
+
     except Exception as e:
         log.error(f"Error processing URL {url}: {e}")
         await update.message.reply_text("❌ Произошла ошибка при обработке видео. Попробуйте позже.")
