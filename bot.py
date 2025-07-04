@@ -41,7 +41,7 @@ from telegram.ext import (
     Application, ContextTypes,
     CommandHandler, MessageHandler, filters,
 )
-from telegram.ext.webhookhandler import WebhookRequestHandler
+from telegram.ext.webhook import WebhookRequestHandler
 # ENV
 load_dotenv()
 
