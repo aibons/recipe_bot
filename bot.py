@@ -78,20 +78,33 @@ def parse_recipe_blocks(text: str) -> dict:
         blocks["extra"] = extra.group(1).strip()
     return blocks
 
-def format_recipe_markdown(recipe: dict) -> str:
+def format_recipe_markdown(recipe: dict, original_url: str = "", duration: str = "") -> str:
     lines = []
+    # Заголовок
     if recipe.get("title"):
-        lines.append(f"*{escape_markdown_v2('Рецепт: ' + recipe['title'])}*")
+        lines.append(f"🍲 *{escape_markdown_v2(recipe['title'].upper())}*")
+    # Ингредиенты
     if recipe.get("ingredients"):
-        lines.append(f"\n*{escape_markdown_v2('Ингредиенты:')}*")
+        lines.append("\n🛒 *Ингредиенты*")
         for i in recipe['ingredients']:
-            lines.append(f"- {escape_markdown_v2(i)}")
+            lines.append(f"• {escape_markdown_v2(i)}")
+    if recipe.get("ingredients"):
+        lines.append("\n_____")
+    # Шаги приготовления
     if recipe.get("steps"):
-        lines.append(f"\n*{escape_markdown_v2('Приготовление:')}*")
+        lines.append("👨‍🍳 *Шаги приготовления*")
         for idx, s in enumerate(recipe['steps'], 1):
             lines.append(f"{idx}. {escape_markdown_v2(s)}")
+        lines.append("\n_____")
+    # Дополнительно
     if recipe.get("extra"):
-        lines.append(f"\n*{escape_markdown_v2('Дополнительно:')}*\n{escape_markdown_v2(recipe['extra'])}")
+        lines.append(f"💡 *Дополнительно*\n{escape_markdown_v2(recipe['extra'])}\n\n_____")
+    # Оригинал и длительность
+    if original_url:
+        orig = f"[Оригинал]({original_url})"
+        if duration:
+            orig += f" ({duration})"
+        lines.append(orig)
     return "\n".join(lines)
 
 # ENV
@@ -384,7 +397,11 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             # fallback — просто экранируем оригинальный текст
             md = escape_markdown_v2(recipe)
         else:
-            md = escape_markdown_v2(format_recipe_markdown(blocks))
+            md = format_recipe_markdown(
+                blocks,
+                original_url=video_info.get("webpage_url", url) if video_info else url,
+                duration=str(int(video_info.get("duration", 0))) + " сек." if video_info and "duration" in video_info else ""
+            )
 
         await update.message.reply_text(
             md,
