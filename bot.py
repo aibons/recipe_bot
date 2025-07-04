@@ -348,34 +348,63 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             "❌ Поддерживаются только ссылки на Instagram Reels, TikTok и YouTube Shorts"
         )
         return
-    
+
     # Проверка лимита
     if uid != OWNER_ID:
         current_usage = get_quota_usage(uid)
         if current_usage >= FREE_LIMIT:
             await update.message.reply_text("ℹ️ Лимит бесплатных роликов исчерпан.")
             return
-    
+
     # Показать "печатает..."
     await update.message.chat.send_action(constants.ChatAction.TYPING)
-    
+
+    # --- fallback_md должен быть определён всегда ---
+    fallback_blocks = {
+        "title": "Не удалось извлечь рецепт",
+        "ingredients": [],
+        "steps": [],
+        "extra": "🤖 Не удалось извлечь рецепт из видео. Попробуйте самостоятельно посмотреть описание ролика или текст под видео."
+    }
+    fallback_md = format_recipe_markdown(
+        fallback_blocks,
+        original_url=url,
+        duration=""
+    )
+    video_info = None
+    video_path = None
     try:
         # Скачиваем видео
         video_path, video_info = await download_video(url)
+
+        # Если video_info уже есть — обновляем fallback_md с его данными
+        if video_info:
+            fallback_blocks["title"] = video_info.get("title", "Не удалось извлечь рецепт").strip()
+            fallback_md = format_recipe_markdown(
+                fallback_blocks,
+                original_url=video_info.get("webpage_url", url),
+                duration=str(int(video_info.get("duration", 0))) + " сек." if "duration" in video_info else ""
+            )
 
         # Явный лог, если video_path или video_info отсутствуют
         if not video_path or not video_path.exists():
             log.error(f"Download failed or file does not exist for url: {url}")
             await update.message.reply_text("❌ Не удалось скачать видео. Возможно, оно приватное или требует аутентификацию.")
-            # Отправляем рецепт с сообщением об ошибке, чтобы был фидбек
-            recipe = "🤖 Не удалось скачать видео. Попробуйте другую ссылку."
-            await update.message.reply_text(recipe, parse_mode=constants.ParseMode.MARKDOWN)
+            # Отправляем fallback_md (текстовый блок)
+            await update.message.reply_text(
+                fallback_md,
+                parse_mode=constants.ParseMode.MARKDOWN_V2,
+                disable_web_page_preview=True,
+            )
             return
         if not video_info:
             log.error(f"Download returned no video_info for url: {url}")
             await update.message.reply_text("❌ Не удалось получить информацию о видео. Возможно, оно приватное или требует аутентификацию.")
-            recipe = "🤖 Не удалось получить информацию о видео. Попробуйте другую ссылку."
-            await update.message.reply_text(recipe, parse_mode=constants.ParseMode.MARKDOWN)
+            await update.message.reply_text(
+                fallback_md,
+                parse_mode=constants.ParseMode.MARKDOWN_V2,
+                disable_web_page_preview=True,
+            )
             return
 
         # Проверяем размер файла (Telegram лимит 50MB)
@@ -383,8 +412,11 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if file_size > 50 * 1024 * 1024:  # 50MB
             await update.message.reply_text("❌ Видео слишком большое для отправки (максимум 50MB).")
             video_path.unlink(missing_ok=True)
-            recipe = "🤖 Видео слишком большое для отправки. Попробуйте другое видео."
-            await update.message.reply_text(recipe, parse_mode=constants.ParseMode.MARKDOWN)
+            await update.message.reply_text(
+                fallback_md,
+                parse_mode=constants.ParseMode.MARKDOWN_V2,
+                disable_web_page_preview=True,
+            )
             return
 
         # Отправляем видео СРАЗУ (caption пустой, текст отдельным сообщением)
@@ -395,41 +427,27 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
                 parse_mode=None
             )
 
-        # Сначала формируем красивый fallback на случай любой ошибки
-        fallback_blocks = {
-            "title": video_info.get("title", "Не удалось извлечь рецепт").strip() if video_info else "Не удалось извлечь рецепт",
-            "ingredients": [],
-            "steps": [],
-            "extra": "🤖 Не удалось извлечь рецепт из видео. Попробуйте самостоятельно посмотреть описание ролика или текст под видео."
-        }
-        fallback_md = format_recipe_markdown(
-            fallback_blocks,
-            original_url=video_info.get("webpage_url", url) if video_info else url,
-            duration=str(int(video_info.get("duration", 0))) + " сек." if video_info and "duration" in video_info else ""
-        )
-
-        # Пробуем извлечь рецепт — если ошибка или текст невалиден, используем fallback_md
+        # fallback_md уже актуален (с web_url и title)
         try:
             recipe = await extract_recipe_from_video(video_info)
             log.info(f"Extracted recipe raw:\n{recipe}")
             blocks = parse_recipe_blocks(recipe)
-            # Если текст пустой, или только с ошибкой — шлем fallback шаблон
+            # Если текст пустой, или только с ошибкой — fallback шаблон
             invalid = (
                 not recipe or recipe.strip().startswith("🤖")
                 or not (blocks["title"] or blocks["ingredients"] or blocks["steps"])
             )
             if invalid:
-                # fallback_md отправляется в случае ошибок или неосмысленного ответа
                 md = fallback_md
             else:
                 md = format_recipe_markdown(
                     blocks,
-                    original_url=video_info.get("webpage_url", url) if video_info else url,
-                    duration=str(int(video_info.get("duration", 0))) + " сек." if video_info and "duration" in video_info else ""
+                    original_url=video_info.get("webpage_url", url),
+                    duration=str(int(video_info.get("duration", 0))) + " сек." if "duration" in video_info else ""
                 )
         except Exception as err:
             log.error(f"Ошибка извлечения рецепта: {err}")
-            md = fallback_md  # Всегда fallback по шаблону!
+            md = fallback_md  # fallback по шаблону!
 
         await update.message.reply_text(
             md,
@@ -446,7 +464,12 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
     except Exception as e:
         log.error(f"Error processing URL {url}: {e}")
-        await update.message.reply_text("❌ Произошла ошибка при обработке видео. Попробуйте позже.")
+        # fallback_md уже определён (на случай если видео_info нет — минимальный шаблон)
+        await update.message.reply_text(
+            fallback_md,
+            parse_mode=constants.ParseMode.MARKDOWN_V2,
+            disable_web_page_preview=True,
+        )
 
 # Health check для Render
 async def health_check(request: web.Request) -> web.Response:
