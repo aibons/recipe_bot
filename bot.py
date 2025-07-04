@@ -123,7 +123,7 @@ WELCOME = escape_markdown(
     Бесплатно доступно *6* роликов\.  
     Тарифы \(скоро\):
 
-    • 100 роликов — 299 ₽  
+    • 10 роликов + 7 дн\. — 49 ₽
     • 200 роликов + 30 дн\. — 199 ₽  
 
     Пришлите ссылку на Reels / Shorts / TikTok, а остальное я сделаю сам\!
@@ -134,26 +134,24 @@ WELCOME = escape_markdown(
 async def cmd_start(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(WELCOME, parse_mode=constants.ParseMode.MARKDOWN_V2)
 
+# ─────────── обработчик входящих ссылок ───────────
 async def handle(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     url = update.message.text.strip()
-    uid = update.effective_user.id
 
-    # лимит
-    if uid != OWNER_ID and quota_use(uid) > FREE_LIMIT:
-        await update.message.reply_text("🚧 Лимит бесплатных роликов исчерпан.")
-        return
+    # эффект «печатает/загружает»
+    await update.message.chat.send_action(constants.ChatAction.TYPING)
 
-    status = await update.message.reply_text("🏃‍♂️ Скачиваю…")
     try:
-        video_path = await asyncio.to_thread(download, url)
-        await ctx.bot.send_chat_action(chat_id=update.effective_chat.id,
-                                       action=constants.ChatAction.UPLOAD_VIDEO)
-        await ctx.bot.send_video(chat_id=update.effective_chat.id,
-                                 video=video_path.read_bytes())
-        await status.delete()
+        video_path, info = await download(url)          #  ←  await !
     except Exception as e:
         log.warning("download failure: %s", e)
-        await status.edit_text("❌ Не смог скачать это видео.")
+        await update.message.reply_text("❌ Не смог скачать это видео.")
+        return
+
+    await update.message.chat.send_action(constants.ChatAction.UPLOAD_VIDEO)
+    await update.message.reply_video(video=video_path.read_bytes(),
+                                     caption="✅ Готово!")
+    video_path.unlink(missing_ok=True)
 
 # ─── AIOHTTP health на / ──────────────────────────────
 async def health(_: web.Request) -> web.Response:
