@@ -38,8 +38,19 @@ from telegram.ext import (
 from telegram.helpers import escape_markdown
 
 # ──────────────────────── ENV ─────────────────────────────
-load_dotenv()
-TOKEN            = Path('.env').read_text().split('TELEGRAM_TOKEN=')[1].splitlines()[0]
+from dotenv import load_dotenv
+import os
+
+load_dotenv()                    # спокойно ничего не делает, если .env отсутствует
+
+TOKEN            = os.environ["TELEGRAM_TOKEN"]
+OPENAI_API_KEY   = os.environ["OPENAI_API_KEY"]
+
+# можно задавать дефолтные пути к cookie-файлам
+IG_COOKIES_FILE  = os.getenv("IG_COOKIES_FILE",  "cookies_instagram.txt")
+TT_COOKIES_FILE  = os.getenv("TT_COOKIES_FILE",  "cookies_tiktok.txt")
+YT_COOKIES_FILE  = os.getenv("YT_COOKIES_FILE",  "cookies_youtube.txt")
+
 OWNER_ID         = 248610561                # ваш user-id
 FREE_LIMIT       = 6                        # бесплатных роликов
 
