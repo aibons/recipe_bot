@@ -36,8 +36,6 @@ from telegram.ext import (
     Application, ContextTypes,
     CommandHandler, MessageHandler, filters,
 )
-from telegram.helpers import escape_markdown
-
 # ENV
 load_dotenv()
 
@@ -116,8 +114,13 @@ def get_ydl_opts(url: str) -> dict:
         opts["cookiefile"] = IG_COOKIES_FILE
     elif "tiktok.com" in url and TT_COOKIES_FILE and Path(TT_COOKIES_FILE).exists():
         opts["cookiefile"] = TT_COOKIES_FILE
-    elif "youtube.com" in url and YT_COOKIES_FILE and Path(YT_COOKIES_FILE).exists():
-        opts["cookiefile"] = YT_COOKIES_FILE
+    elif ("youtube.com" in url or "youtu.be" in url) and YT_COOKIES_FILE and Path(YT_COOKIES_FILE).exists():
+        # Дополнительно проверим для youtube.com/shorts
+        parsed = urlparse(url)
+        if "youtu.be" in parsed.netloc or "/shorts" in parsed.path:
+            opts["cookiefile"] = YT_COOKIES_FILE
+        elif "youtube.com" in parsed.netloc:
+            opts["cookiefile"] = YT_COOKIES_FILE
     
     return opts
 
@@ -180,8 +183,11 @@ async def extract_recipe_from_video(video_info: dict) -> str:
         
         👨‍🍳 **Приготовление:**
         1. [пошаговые инструкции]
-        
-        Если рецепта нет, просто напиши "В этом видео нет рецепта."
+
+        💡 **Дополнительно:**
+        Если есть дополнительная информация или описание, добавь её сюда.
+
+        Если рецепта нет, просто напиши "В этом видео нет рецепта." и при возможности добавь дополнительную информацию из описания.
         """
         
         client = openai.OpenAI(api_key=OPENAI_API_KEY)
@@ -220,29 +226,29 @@ def is_supported_url(url: str) -> bool:
         return False
 
 # Welcome текст
-WELCOME = escape_markdown(textwrap.dedent("""
+WELCOME = """
 🔥 **Recipe Bot** — сохраняю рецепт из короткого видео!
 
 Бесплатно доступно **6** роликов.
 Тарифы (скоро):
 
-• 10 роликов — 49 ₽  
-• 200 роликов + 30 дн. — 199 ₽  
+- 10 роликов — 49 ₽
+- 200 роликов + 30 дн. — 199 ₽
 
 Пришлите ссылку на Reels / Shorts / TikTok, а остальное я сделаю сам!
 
-Поддерживаемые платформы:
-• Instagram Reels
-• TikTok
-• YouTube Shorts
-""").strip(), version=2)
+**Поддерживаемые платформы:**
+- Instagram Reels
+- TikTok
+- YouTube Shorts
+""".strip()
 
 # Handlers
 async def cmd_start(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработчик команды /start"""
     await update.message.reply_text(
-        WELCOME, 
-        parse_mode=constants.ParseMode.MARKDOWN_V2
+        WELCOME,
+        parse_mode=constants.ParseMode.MARKDOWN
     )
 
 async def cmd_status(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
@@ -262,7 +268,9 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработчик URL-ов"""
     url = update.message.text.strip()
     uid = update.effective_user.id
-    
+
+    await update.message.reply_text("🏃 Скачиваю...")
+
     # Проверка поддерживаемых URL
     if not is_supported_url(url):
         await update.message.reply_text(
@@ -286,6 +294,9 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         
         if not video_path or not video_path.exists():
             await update.message.reply_text("❌ Не удалось скачать видео. Возможно, оно приватное или требует аутентификацию.")
+            # Отправляем рецепт с сообщением об ошибке, чтобы был фидбек
+            recipe = "🤖 Не удалось скачать видео. Попробуйте другую ссылку."
+            await update.message.reply_text(recipe, parse_mode=constants.ParseMode.MARKDOWN)
             return
         
         # Проверяем размер файла (Telegram лимит 50MB)
@@ -293,6 +304,9 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if file_size > 50 * 1024 * 1024:  # 50MB
             await update.message.reply_text("❌ Видео слишком большое для отправки (максимум 50MB).")
             video_path.unlink(missing_ok=True)
+            # Отправляем рецепт с сообщением об ошибке, чтобы был фидбек
+            recipe = "🤖 Видео слишком большое для отправки. Попробуйте другое видео."
+            await update.message.reply_text(recipe, parse_mode=constants.ParseMode.MARKDOWN)
             return
         
         # Извлекаем рецепт
@@ -303,6 +317,7 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             await update.message.reply_video(
                 video=video_file,
                 caption="",  # Caption пустой или максимум короткое название
+                parse_mode=None
             )
         
         # Разбить рецепт на секции
@@ -311,7 +326,7 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
         await update.message.reply_text(
             md,
-            parse_mode=constants.ParseMode.MARKDOWN_V2,
+            parse_mode=constants.ParseMode.MARKDOWN,
             disable_web_page_preview=True,
         )
         
@@ -321,6 +336,9 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         
         # Удаляем временный файл
         video_path.unlink(missing_ok=True)
+        
+        # После отправки видео, отправить рецепт отдельно (дублируется выше, но если нужно еще раз, можно удалить этот комментарий)
+        # await update.message.reply_text(md, parse_mode=constants.ParseMode.MARKDOWN)
         
     except Exception as e:
         log.error(f"Error processing URL {url}: {e}")
@@ -382,23 +400,22 @@ async def main() -> None:
 if __name__ == "__main__":
     asyncio.run(main())
 
-# Форматирование рецепта для Telegram MarkdownV2
+
+# Форматирование рецепта для Telegram Markdown
 def format_recipe_markdown(recipe: dict) -> str:
-    from telegram.helpers import escape_markdown
     lines = []
     if recipe.get("title"):
-        lines.append(f"*📋 Рецепт: {escape_markdown(recipe['title'], version=2)}*")
+        lines.append(f"📋 *Рецепт: {recipe['title']}*")
     if recipe.get("ingredients"):
         lines.append("\n*🛒 Ингредиенты:*")
-        for ingr in recipe["ingredients"]:
-            lines.append(f"• {escape_markdown(ingr, version=2)}")
+        for i in recipe['ingredients']:
+            lines.append(f"- {i}")
     if recipe.get("steps"):
         lines.append("\n*👩‍🍳 Приготовление:*")
-        for i, step in enumerate(recipe["steps"], 1):
-            lines.append(f"{i}. {escape_markdown(step, version=2)}")
+        for idx, s in enumerate(recipe['steps'], 1):
+            lines.append(f"{idx}. {s}")
     if recipe.get("extra"):
-        lines.append("\n*💡 Дополнительно:*")
-        lines.append(escape_markdown(recipe["extra"], version=2))
+        lines.append(f"\n*💡 Дополнительно:*\n{recipe['extra']}")
     return "\n".join(lines)
 
 # Парсер блоков из ответа OpenAI (markdown -> dict)
