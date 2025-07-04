@@ -7,6 +7,11 @@ recipe_bot – Telegram-бот, который скачивает коротки
 с рецептом. Работает на python-telegram-bot v22.
 """
 
+# Если ты деплоишь на Render/сервер:
+# 1. В настройках Render укажи переменную окружения WEBHOOK_URL вида:
+#    https://recipe-bot-q839.onrender.com/
+#    (или актуальный URL твоего Render-сервиса)
+
 from __future__ import annotations
 import asyncio
 import json
@@ -353,11 +358,12 @@ async def health_check(request: web.Request) -> web.Response:
     """Health check endpoint"""
     return web.Response(text="OK", status=200)
 
-def create_web_app() -> web.Application:
-    """Создать веб-приложение для health check"""
+def create_web_app(application: Application) -> web.Application:
+    """Создать веб-приложение для health check и webhook"""
     app = web.Application()
     app.router.add_get("/", health_check)
     app.router.add_get("/health", health_check)
+    app.router.add_post("/", application.webhook_handler)
     return app
 
 async def main() -> None:
@@ -372,8 +378,8 @@ async def main() -> None:
     application.add_handler(CommandHandler("status", cmd_status))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_url))
     
-    # Создаем веб-сервер для health check
-    web_app = create_web_app()
+    # Создаем веб-сервер для health check + webhook
+    web_app = create_web_app(application)
     runner = web.AppRunner(web_app)
     await runner.setup()
     
@@ -385,14 +391,15 @@ async def main() -> None:
     
     # Запускаем Telegram бота
     await application.initialize()
-    await application.start()
     WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
     if WEBHOOK_URL:
-        await application.bot.set_webhook(WEBHOOK_URL)
+        await application.bot.set_webhook(url=WEBHOOK_URL)
         log.info(f"Webhook set to: {WEBHOOK_URL}")
+        await application.start()  # Запускать только если webhook!
     else:
         # Для локальной отладки можно fallback на polling
         log.warning("WEBHOOK_URL не задан. Запуск через polling (локально).")
+        await application.start()
         await application.updater.start_polling(drop_pending_updates=True)
     
     log.info("Recipe bot started successfully!")
