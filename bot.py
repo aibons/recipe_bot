@@ -248,7 +248,7 @@ async def cmd_start(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработчик команды /start"""
     await update.message.reply_text(
         WELCOME,
-        parse_mode=constants.ParseMode.MARKDOWN
+        parse_mode=constants.ParseMode.MARKDOWN_V2
     )
 
 async def cmd_status(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
@@ -322,11 +322,15 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         
         # Разбить рецепт на секции
         blocks = parse_recipe_blocks(recipe)
-        md = format_recipe_markdown(blocks)
+        if not (blocks["title"] or blocks["ingredients"] or blocks["steps"] or blocks["extra"]):
+            # fallback — просто экранируем оригинальный текст
+            md = escape_markdown_v2(recipe)
+        else:
+            md = format_recipe_markdown(blocks)
 
         await update.message.reply_text(
             md,
-            parse_mode=constants.ParseMode.MARKDOWN,
+            parse_mode=constants.ParseMode.MARKDOWN_V2,
             disable_web_page_preview=True,
         )
         
@@ -401,21 +405,20 @@ if __name__ == "__main__":
     asyncio.run(main())
 
 
-# Форматирование рецепта для Telegram Markdown
 def format_recipe_markdown(recipe: dict) -> str:
     lines = []
     if recipe.get("title"):
-        lines.append(f"📋 *Рецепт: {recipe['title']}*")
+        lines.append(f"*{escape_markdown_v2('Рецепт: ' + recipe['title'])}*")
     if recipe.get("ingredients"):
-        lines.append("\n*🛒 Ингредиенты:*")
+        lines.append(f"\n*{escape_markdown_v2('Ингредиенты:')}*")
         for i in recipe['ingredients']:
-            lines.append(f"- {i}")
+            lines.append(f"- {escape_markdown_v2(i)}")
     if recipe.get("steps"):
-        lines.append("\n*👩‍🍳 Приготовление:*")
+        lines.append(f"\n*{escape_markdown_v2('Приготовление:')}*")
         for idx, s in enumerate(recipe['steps'], 1):
-            lines.append(f"{idx}. {s}")
+            lines.append(f"{idx}. {escape_markdown_v2(s)}")
     if recipe.get("extra"):
-        lines.append(f"\n*💡 Дополнительно:*\n{recipe['extra']}")
+        lines.append(f"\n*{escape_markdown_v2('Дополнительно:')}*\n{escape_markdown_v2(recipe['extra'])}")
     return "\n".join(lines)
 
 # Парсер блоков из ответа OpenAI (markdown -> dict)
@@ -427,22 +430,28 @@ def parse_recipe_blocks(text: str) -> dict:
         "steps": [],
         "extra": ""
     }
-    # Title
-    m = re.search(r"Рецепт: *(.*)\n", text)
+    # Title (гибко)
+    m = re.search(r"[Рр]ецепт:?\s*([^\n*]*)", text)
     if m:
-        blocks["title"] = m.group(1).strip()
+        blocks["title"] = m.group(1).strip(" *")
     # Ингредиенты
-    ingr = re.search(r"Ингредиенты:\**\n(.+?)\n[👩👨][^:]*:", text, re.DOTALL)
+    ingr = re.search(r"[Ии]нгредиенты:?\**\n(.+?)(\n[Пп]риг|[\n\d]+\.)", text, re.DOTALL)
     if ingr:
-        ingr_lines = [i.strip('•').strip() for i in ingr.group(1).strip().split('\n') if i.strip()]
+        ingr_lines = [i.strip('•-').strip() for i in ingr.group(1).strip().split('\n') if i.strip()]
         blocks["ingredients"] = ingr_lines
     # Шаги
-    steps = re.search(r"[👩👨][^:]*:\**\n(.+?)(\n💡|$)", text, re.DOTALL)
+    steps = re.search(r"[Пп]риготовление:?\**\n(.+?)(\n[Дд]ополнительно|$)", text, re.DOTALL)
     if steps:
         steps_lines = [s.strip("0123456789. ").strip() for s in steps.group(1).split('\n') if s.strip()]
         blocks["steps"] = steps_lines
     # Дополнительно
-    extra = re.search(r"💡[^:]*:\**\n(.+)", text, re.DOTALL)
+    extra = re.search(r"[Дд]ополнительно:?\**\n(.+)", text, re.DOTALL)
     if extra:
         blocks["extra"] = extra.group(1).strip()
     return blocks
+
+# Экранирование Markdown V2
+def escape_markdown_v2(text: str) -> str:
+    """Экранирует спецсимволы для Markdown V2 Telegram"""
+    chars = r"\_*[]()~`>#+-=|{}.!"
+    return ''.join(f"\\{c}" if c in chars else c for c in text)
