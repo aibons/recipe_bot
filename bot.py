@@ -363,7 +363,7 @@ def create_web_app(application: Application) -> web.Application:
     app = web.Application()
     app.router.add_get("/", health_check)
     app.router.add_get("/health", health_check)
-    app.router.add_post("/", application.request_handler)
+    app.router.add_post("/", application.as_handler())
     return app
 
 async def main() -> None:
