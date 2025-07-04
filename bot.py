@@ -59,6 +59,10 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s | %(message)s"
 )
 
+# Глушим httpx и telegram.ext._utils.networkloop до WARNING
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("telegram.ext._utils.networkloop").setLevel(logging.WARNING)
+
 def init_db() -> None:
     """Инициализация базы данных для отслеживания использования"""
     Path("data").mkdir(exist_ok=True)
