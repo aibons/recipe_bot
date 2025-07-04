@@ -386,7 +386,14 @@ async def main() -> None:
     # Запускаем Telegram бота
     await application.initialize()
     await application.start()
-    await application.updater.start_polling(drop_pending_updates=True)
+    WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
+    if WEBHOOK_URL:
+        await application.bot.set_webhook(WEBHOOK_URL)
+        log.info(f"Webhook set to: {WEBHOOK_URL}")
+    else:
+        # Для локальной отладки можно fallback на polling
+        log.warning("WEBHOOK_URL не задан. Запуск через polling (локально).")
+        await application.updater.start_polling(drop_pending_updates=True)
     
     log.info("Recipe bot started successfully!")
     
