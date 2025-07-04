@@ -99,7 +99,7 @@ async def download(url: str) -> tuple[Path, dict]:
     return await loop.run_in_executor(None, _sync_download, url)
 
 def _sync_download(url: str) -> tuple[Path, dict]:
-    with YoutubeDL(yt_opts(url)) as ydl:
+    with YoutubeDL({**YDL_OPTS, **yt_opts(url)}) as ydl:
         info = ydl.extract_info(url, download=True)
         return Path(ydl.prepare_filename(info)), info
 
