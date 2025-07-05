@@ -186,10 +186,15 @@ def create_temp_cookies_file(content: str) -> Optional[str]:
         log.error(f"Failed to create temp cookies file: {e}")
         return None
 
-def get_ydl_opts(url: str) -> dict:
-    """Получить опции yt-dlp для конкретного URL"""
+def get_ydl_opts(url: str) -> Tuple[dict, Optional[str]]:
+    """Получить опции yt-dlp для конкретного URL.
+
+    Возвращает кортеж из словаря опций и пути к временному cookie-файлу,
+    если он был создан (иначе ``None``).
+    """
     
     # Базовые настройки
+    temp_cookie = None
     opts = {
         "format": "best[height<=720]/best[ext=mp4]/best",
         "quiet": True,
@@ -236,6 +241,7 @@ def get_ydl_opts(url: str) -> dict:
             temp_cookies = create_temp_cookies_file(IG_COOKIES_CONTENT)
             if temp_cookies:
                 opts["cookiefile"] = temp_cookies
+                temp_cookie = temp_cookies
         elif IG_COOKIES_FILE and Path(IG_COOKIES_FILE).exists():
             opts["cookiefile"] = IG_COOKIES_FILE
             
@@ -253,6 +259,7 @@ def get_ydl_opts(url: str) -> dict:
             temp_cookies = create_temp_cookies_file(TT_COOKIES_CONTENT)
             if temp_cookies:
                 opts["cookiefile"] = temp_cookies
+                temp_cookie = temp_cookies
         elif TT_COOKIES_FILE and Path(TT_COOKIES_FILE).exists():
             opts["cookiefile"] = TT_COOKIES_FILE
             
@@ -268,6 +275,7 @@ def get_ydl_opts(url: str) -> dict:
                 temp_cookies = create_temp_cookies_file(YT_COOKIES_CONTENT)
                 if temp_cookies:
                     opts["cookiefile"] = temp_cookies
+                    temp_cookie = temp_cookies
             elif YT_COOKIES_FILE and Path(YT_COOKIES_FILE).exists():
                 opts["cookiefile"] = YT_COOKIES_FILE
         elif "youtube.com" in parsed.netloc:
@@ -279,10 +287,11 @@ def get_ydl_opts(url: str) -> dict:
                 temp_cookies = create_temp_cookies_file(YT_COOKIES_CONTENT)
                 if temp_cookies:
                     opts["cookiefile"] = temp_cookies
+                    temp_cookie = temp_cookies
             elif YT_COOKIES_FILE and Path(YT_COOKIES_FILE).exists():
                 opts["cookiefile"] = YT_COOKIES_FILE
     
-    return opts
+    return opts, temp_cookie
 
 async def download_video(url: str) -> Tuple[Optional[Path], Optional[dict]]:
     """Скачать видео асинхронно"""
@@ -294,8 +303,9 @@ def _sync_download(url: str) -> Tuple[Optional[Path], Optional[dict]]:
     import shutil
     temp_dir = Path(tempfile.mkdtemp())
     
+    temp_cookie = None
     try:
-        opts = get_ydl_opts(url)
+        opts, temp_cookie = get_ydl_opts(url)
         opts["outtmpl"] = str(temp_dir / "%(id)s.%(ext)s")
         
         log.info(f"Starting download for URL: {url}")
@@ -343,7 +353,7 @@ def _sync_download(url: str) -> Tuple[Optional[Path], Optional[dict]]:
             except DownloadError as e:
                 error_msg = str(e).lower()
                 log.error(f"yt-dlp Download error: {e}")
-                
+
                 # Обработка специфичных ошибок
                 if "private" in error_msg or "login" in error_msg:
                     log.error("Video is private or requires authentication")
@@ -355,16 +365,20 @@ def _sync_download(url: str) -> Tuple[Optional[Path], Optional[dict]]:
                     log.error("Video is blocked due to copyright")
                 else:
                     log.error(f"Unknown download error: {error_msg}")
-                    
+
                 return None, None
-                
+
             except Exception as e:
                 log.error(f"Unexpected error during yt-dlp extraction: {e}")
                 return None, None
+
                 
     except Exception as e:
         log.error(f"Unexpected error during download setup: {e}")
         return None, None
+    finally:
+        if temp_cookie:
+            Path(temp_cookie).unlink(missing_ok=True)
 
 
 async def extract_recipe_from_video(video_info: dict) -> str:
@@ -583,6 +597,10 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
                 parse_mode=constants.ParseMode.MARKDOWN_V2,
                 disable_web_page_preview=True,
             )
+            if video_path:
+                temp_dir = video_path.parent
+                video_path.unlink(missing_ok=True)
+                shutil.rmtree(temp_dir, ignore_errors=True)
             return
             
         if not video_info:
@@ -596,6 +614,10 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
                 parse_mode=constants.ParseMode.MARKDOWN_V2,
                 disable_web_page_preview=True,
             )
+            if video_path:
+                temp_dir = video_path.parent
+                video_path.unlink(missing_ok=True)
+                shutil.rmtree(temp_dir, ignore_errors=True)
             return
 
         # Проверяем размер файла (Telegram лимит 50MB)
