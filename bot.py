@@ -139,8 +139,7 @@ logging.getLogger("telegram.ext._utils.networkloop").setLevel(logging.WARNING)
 
 def init_db() -> None:
     """Инициализация базы данных для отслеживания использования"""
-    Path("data").mkdir(exist_ok=True)
-    with sqlite3.connect("data/usage.db") as db:
+    with sqlite3.connect("bot.db") as db:
         db.execute("""
             CREATE TABLE IF NOT EXISTS quota(
                 uid INTEGER PRIMARY KEY, 
@@ -151,14 +150,14 @@ def init_db() -> None:
 
 def get_quota_usage(uid: int) -> int:
     """Получить текущее использование квоты"""
-    with sqlite3.connect("data/usage.db") as db:
+    with sqlite3.connect("bot.db") as db:
         cur = db.execute("SELECT n FROM quota WHERE uid=?", (uid,))
         row = cur.fetchone()
         return row[0] if row else 0
 
 def increment_quota(uid: int) -> int:
     """Увеличить счетчик использования и вернуть новое значение"""
-    with sqlite3.connect("data/usage.db") as db:
+    with sqlite3.connect("bot.db") as db:
         cur = db.execute("SELECT n FROM quota WHERE uid=?", (uid,))
         row = cur.fetchone()
         current = row[0] if row else 0
@@ -202,6 +201,7 @@ async def download_video(url: str) -> Tuple[Optional[Path], Optional[dict]]:
 
 def _sync_download(url: str) -> Tuple[Optional[Path], Optional[dict]]:
     """Синхронная функция для скачивания видео"""
+    import shutil
     temp_dir = Path(tempfile.mkdtemp())
     
     try:
@@ -228,6 +228,12 @@ def _sync_download(url: str) -> Tuple[Optional[Path], Optional[dict]]:
     except Exception as e:
         log.error(f"Unexpected error during download: {e}")
         return None, None
+    finally:
+        # Cleanup temporary directory and all its contents
+        try:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        except Exception as cleanup_error:
+            log.warning(f"Failed to cleanup temp directory {temp_dir}: {cleanup_error}")
 
 async def extract_recipe_from_video(video_info: dict) -> str:
     """Извлечь рецепт из информации о видео используя OpenAI"""
@@ -293,7 +299,8 @@ def is_supported_url(url: str) -> bool:
         parsed = urlparse(url)
         domain = parsed.netloc.lower()
         return any(supported in domain for supported in supported_domains)
-    except:
+    except (ValueError, TypeError, AttributeError) as e:
+        log.warning(f"Invalid URL format: {url}, error: {e}")
         return False
 
 # Welcome текст
