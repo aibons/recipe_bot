@@ -103,7 +103,7 @@ def format_recipe_markdown(recipe: dict, original_url: str = "", duration: str =
     if original_url:
         orig = f"[Оригинал]({original_url})"
         if duration:
-            orig += f" ({duration})"
+            orig += f" {escape_markdown_v2(f'({duration})')}"
         lines.append(orig)
     return "\n".join(lines)
 
@@ -340,19 +340,20 @@ async def cmd_status(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         remaining = max(0, FREE_LIMIT - used)
         status_text = f"📊 Использовано: {used}/{FREE_LIMIT}\n🆓 Осталось: {remaining}"
     
-    await update.message.reply_text(status_text)
+    await update.message.reply_text(status_text, parse_mode=None)
 
 async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработчик URL-ов"""
     url = update.message.text.strip()
     uid = update.effective_user.id
 
-    await update.message.reply_text("🏃 Скачиваю...")
+    await update.message.reply_text("🏃 Скачиваю...", parse_mode=None)
 
     # Проверка поддерживаемых URL
     if not is_supported_url(url):
         await update.message.reply_text(
-            "❌ Поддерживаются только ссылки на Instagram Reels, TikTok и YouTube Shorts"
+            "❌ Поддерживаются только ссылки на Instagram Reels, TikTok и YouTube Shorts",
+            parse_mode=None
         )
         return
 
@@ -360,7 +361,10 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if uid != OWNER_ID:
         current_usage = get_quota_usage(uid)
         if current_usage >= FREE_LIMIT:
-            await update.message.reply_text("ℹ️ Лимит бесплатных роликов исчерпан.")
+            await update.message.reply_text(
+                "ℹ️ Лимит бесплатных роликов исчерпан.",
+                parse_mode=None
+            )
             return
 
     # Показать "печатает..."
@@ -396,7 +400,10 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         # Явный лог, если video_path или video_info отсутствуют
         if not video_path or not video_path.exists():
             log.error(f"Download failed or file does not exist for url: {url}")
-            await update.message.reply_text("❌ Не удалось скачать видео. Возможно, оно приватное или требует аутентификацию.")
+            await update.message.reply_text(
+                "❌ Не удалось скачать видео. Возможно, оно приватное или требует аутентификацию.",
+                parse_mode=None
+            )
             # Отправляем fallback_md (текстовый блок)
             await update.message.reply_text(
                 fallback_md,
@@ -406,7 +413,10 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             return
         if not video_info:
             log.error(f"Download returned no video_info for url: {url}")
-            await update.message.reply_text("❌ Не удалось получить информацию о видео. Возможно, оно приватное или требует аутентификацию.")
+            await update.message.reply_text(
+                "❌ Не удалось получить информацию о видео. Возможно, оно приватное или требует аутентификацию.",
+                parse_mode=None
+            )
             await update.message.reply_text(
                 fallback_md,
                 parse_mode=constants.ParseMode.MARKDOWN_V2,
@@ -417,7 +427,10 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         # Проверяем размер файла (Telegram лимит 50MB)
         file_size = video_path.stat().st_size
         if file_size > 50 * 1024 * 1024:  # 50MB
-            await update.message.reply_text("❌ Видео слишком большое для отправки (максимум 50MB).")
+            await update.message.reply_text(
+                "❌ Видео слишком большое для отправки (максимум 50MB).",
+                parse_mode=None
+            )
             video_path.unlink(missing_ok=True)
             await update.message.reply_text(
                 fallback_md,
