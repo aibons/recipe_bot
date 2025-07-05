@@ -80,36 +80,71 @@ def parse_recipe_blocks(text: str) -> dict:
     return blocks
 
 def format_recipe_markdown(recipe: dict, original_url: str = "", duration: str = "") -> str:
-    lines = []
-    # Заголовок
-    if recipe.get("title"):
-        lines.append(f"🍲 *{escape_markdown_v2(recipe['title'].upper())}*")
+    """Format recipe blocks using Telegram Markdown V2."""
+
+    sep = "⸻"
+    parts = []
+
+    # Заголовок блюда
+    title = recipe.get("title")
+    if title:
+        parts.append(f"🍽️ *{escape_markdown_v2(title.strip())}*")
+
     # Ингредиенты
-    if recipe.get("ingredients"):
-        lines.append("\n🛒 *Ингредиенты*")
-        for i in recipe['ingredients']:
-            lines.append(f"• {escape_markdown_v2(i)}")
-    if recipe.get("ingredients"):
-        lines.append("\n" + escape_markdown_v2("_____"))
+    ingredients = recipe.get("ingredients") or []
+    if ingredients:
+        if parts:
+            parts.append(sep)
+        parts.append("🛒 *Ингредиенты*")
+        for item in ingredients:
+            line = item.strip()
+            # Подзаголовок "Для ...:" – выводим как отдельную строку
+            if line.endswith(":"):
+                parts.append(escape_markdown_v2(line))
+                continue
+
+            # Разделяем название и количество
+            if "—" in line:
+                name, qty = map(str.strip, line.split("—", 1))
+            elif "-" in line:
+                name, qty = map(str.strip, line.split("-", 1))
+            else:
+                name, qty = line, "по вкусу"
+
+            if not qty:
+                qty = "по вкусу"
+
+            parts.append(
+                f"• {escape_markdown_v2(name)} — {escape_markdown_v2(qty)}"
+            )
+
     # Шаги приготовления
-    if recipe.get("steps"):
-        lines.append("👨‍🍳 *Шаги приготовления*")
-        for idx, s in enumerate(recipe['steps'], 1):
-            lines.append(f"{idx}\\. {escape_markdown_v2(s)}")
-        lines.append("\n" + escape_markdown_v2("_____"))
+    steps = recipe.get("steps") or []
+    if steps:
+        if parts:
+            parts.append(sep)
+        parts.append("👩‍🍳 *Шаги приготовления*")
+        for idx, step in enumerate(steps, 1):
+            parts.append(f"{idx}. {escape_markdown_v2(step)}")
+
     # Дополнительно
-    if recipe.get("extra"):
-        lines.append(
-            f"💡 *Дополнительно*\n{escape_markdown_v2(recipe['extra'])}\n\n"
-            f"{escape_markdown_v2('_____')}"
-        )
-    # Оригинал и длительность
+    extra = recipe.get("extra")
+    if extra:
+        if parts:
+            parts.append(sep)
+        parts.append("💡 *Дополнительно*")
+        parts.append(escape_markdown_v2(extra))
+
+    # Оригинал
     if original_url:
-        orig = f"[Оригинал]({original_url})"
+        if parts:
+            parts.append(sep)
+        orig_line = f"🔗 [Оригинал]({original_url})"
         if duration:
-            orig += f" {escape_markdown_v2(f'({duration})')}"
-        lines.append(orig)
-    return "\n".join(lines)
+            orig_line += f" {escape_markdown_v2(f'({duration})')}"
+        parts.append(orig_line)
+
+    return "\n".join(parts)
 
 # ENV
 load_dotenv()
