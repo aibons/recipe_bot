@@ -139,7 +139,7 @@ def format_recipe_markdown(recipe: dict, original_url: str = "", duration: str =
     if original_url:
         if parts:
             parts.append(sep)
-        orig_line = f"🔗 [Оригинал]({original_url})"
+        orig_line = f"🔗 [Оригинал]({escape_markdown_v2(original_url)})"
         if duration:
             orig_line += f" {escape_markdown_v2(f'({duration})')}"
         parts.append(orig_line)

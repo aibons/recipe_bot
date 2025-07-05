@@ -41,7 +41,7 @@ import pytest
 os.environ.setdefault("TELEGRAM_TOKEN", "test")
 os.environ.setdefault("OPENAI_API_KEY", "test")
 
-from bot import parse_recipe_blocks, is_supported_url
+from bot import parse_recipe_blocks, is_supported_url, format_recipe_markdown, escape_markdown_v2
 
 
 def test_parse_recipe_blocks_typical():
@@ -103,5 +103,12 @@ def test_is_supported_url_invalid():
     ]
     for url in invalid_urls:
         assert not is_supported_url(url), f"URL should not be supported: {url}"
+
+
+def test_format_recipe_markdown_escapes_url():
+    recipe = {"title": "Test", "ingredients": [], "steps": [], "extra": ""}
+    url = "https://example.com/watch?v=abc_def(1)"
+    md = format_recipe_markdown(recipe, original_url=url)
+    assert f"[Оригинал]({escape_markdown_v2(url)})" in md
 
 
