@@ -19,6 +19,7 @@ import logging
 import sqlite3
 import textwrap
 import tempfile
+import shutil
 import os
 from pathlib import Path
 
@@ -364,12 +365,7 @@ def _sync_download(url: str) -> Tuple[Optional[Path], Optional[dict]]:
     except Exception as e:
         log.error(f"Unexpected error during download setup: {e}")
         return None, None
-    finally:
-        # Cleanup temporary directory and all its contents
-        try:
-            shutil.rmtree(temp_dir, ignore_errors=True)
-        except Exception as cleanup_error:
-            log.warning(f"Failed to cleanup temp directory {temp_dir}: {cleanup_error}")
+
 
 async def extract_recipe_from_video(video_info: dict) -> str:
     """Извлечь рецепт из информации о видео используя OpenAI"""
@@ -609,7 +605,9 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
                 "❌ Видео слишком большое для отправки (максимум 50MB).",
                 parse_mode=None
             )
+            temp_dir = video_path.parent
             video_path.unlink(missing_ok=True)
+            shutil.rmtree(temp_dir, ignore_errors=True)
             await update.message.reply_text(
                 fallback_md,
                 parse_mode=constants.ParseMode.MARKDOWN_V2,
@@ -657,8 +655,10 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if uid != OWNER_ID:
             increment_quota(uid)
 
-        # Удаляем временный файл
+        # Удаляем временный файл и каталог
+        temp_dir = video_path.parent
         video_path.unlink(missing_ok=True)
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
     except Exception as e:
         log.error(f"Error processing URL {url}: {e}")
@@ -682,6 +682,12 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             parse_mode=constants.ParseMode.MARKDOWN_V2,
             disable_web_page_preview=True,
         )
+
+        # Cleanup temporary files if they exist
+        if video_path:
+            temp_dir = video_path.parent
+            video_path.unlink(missing_ok=True)
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
 # Health check для Render
 async def health_check(request: web.Request) -> web.Response:
