@@ -90,16 +90,19 @@ def format_recipe_markdown(recipe: dict, original_url: str = "", duration: str =
         for i in recipe['ingredients']:
             lines.append(f"• {escape_markdown_v2(i)}")
     if recipe.get("ingredients"):
-        lines.append("\n_____")
+        lines.append("\n" + escape_markdown_v2("_____"))
     # Шаги приготовления
     if recipe.get("steps"):
         lines.append("👨‍🍳 *Шаги приготовления*")
         for idx, s in enumerate(recipe['steps'], 1):
-            lines.append(f"{idx}. {escape_markdown_v2(s)}")
-        lines.append("\n_____")
+            lines.append(f"{idx}\\. {escape_markdown_v2(s)}")
+        lines.append("\n" + escape_markdown_v2("_____"))
     # Дополнительно
     if recipe.get("extra"):
-        lines.append(f"💡 *Дополнительно*\n{escape_markdown_v2(recipe['extra'])}\n\n_____")
+        lines.append(
+            f"💡 *Дополнительно*\n{escape_markdown_v2(recipe['extra'])}\n\n"
+            f"{escape_markdown_v2('_____')}"
+        )
     # Оригинал и длительность
     if original_url:
         orig = f"[Оригинал]({original_url})"
