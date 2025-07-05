@@ -13,7 +13,11 @@ Recipe Bot is a Telegram bot that downloads short cooking videos (Instagram Reel
    ```bash
    pip install -r requirements.txt
    ```
-3. Set environment variables `TELEGRAM_TOKEN` and `OPENAI_API_KEY`. Optional variables for cookies and other settings are described in [DEPLOYMENT.md](DEPLOYMENT.md).
+3. Copy `.env.example` to `.env` and fill in the variables. At minimum set
+   `TELEGRAM_TOKEN` and `OPENAI_API_KEY`. Cookie variables like
+   `IG_COOKIES_CONTENT`, `TT_COOKIES_CONTENT` and `YT_COOKIES_CONTENT` can be
+   added if needed. See [DEPLOYMENT.md](DEPLOYMENT.md) for details on all
+   variables.
 4. Run the bot:
    ```bash
    python bot.py
