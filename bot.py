@@ -480,16 +480,6 @@ WELCOME = textwrap.dedent(
     - 200 роликов + 30 дн. — 199 ₽
 
     Пришлите ссылку на видео с рецептом, а я скачаю его и извлеку рецепт!
-
-    **Поддерживаемые форматы:**
-    📱 Instagram: Reels (/reel/, /p/, /tv/)
-    🎵 TikTok: @username/video/, vm.tiktok.com, vt.tiktok.com
-    📺 YouTube: Shorts (/shorts/), обычные видео
-
-    **Пример ссылок:**
-    • instagram.com/reel/xyz...
-    • tiktok.com/@user/video/123...
-    • youtube.com/shorts/abc...
     """
 ).strip()
 
