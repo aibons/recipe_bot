@@ -14,7 +14,6 @@ recipe_bot – Telegram-бот, который скачивает коротки
 
 from __future__ import annotations
 import asyncio
-import json
 import logging
 import sqlite3
 import textwrap
