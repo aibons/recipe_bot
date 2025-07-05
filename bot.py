@@ -119,9 +119,14 @@ if not OPENAI_API_KEY:
     raise ValueError("OPENAI_API_KEY environment variable is required")
 
 # Cookie файлы (опционально)
-IG_COOKIES_FILE = os.getenv("IG_COOKIES_FILE", "")
-TT_COOKIES_FILE = os.getenv("TT_COOKIES_FILE", "")
-YT_COOKIES_FILE = os.getenv("YT_COOKIES_FILE", "")
+IG_COOKIES_FILE = os.getenv("IG_COOKIES_FILE", "cookies_instagram.txt")
+TT_COOKIES_FILE = os.getenv("TT_COOKIES_FILE", "cookies_tiktok.txt")
+YT_COOKIES_FILE = os.getenv("YT_COOKIES_FILE", "cookies_youtube.txt")
+
+# Cookie содержимое из переменных окружения (альтернатива файлам)
+IG_COOKIES_CONTENT = os.getenv("IG_COOKIES_CONTENT", "")
+TT_COOKIES_CONTENT = os.getenv("TT_COOKIES_CONTENT", "")
+YT_COOKIES_CONTENT = os.getenv("YT_COOKIES_CONTENT", "")
 
 OWNER_ID = int(os.getenv("OWNER_ID", "248610561"))
 FREE_LIMIT = int(os.getenv("FREE_LIMIT", "6"))
@@ -166,10 +171,26 @@ def increment_quota(uid: int) -> int:
         db.commit()
         return new_count
 
+def create_temp_cookies_file(content: str) -> Optional[str]:
+    """Создать временный файл cookies из содержимого переменной окружения"""
+    if not content:
+        return None
+    
+    try:
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as f:
+            f.write(content)
+            return f.name
+    except Exception as e:
+        log.error(f"Failed to create temp cookies file: {e}")
+        return None
+
 def get_ydl_opts(url: str) -> dict:
     """Получить опции yt-dlp для конкретного URL"""
+    
+    # Базовые настройки
     opts = {
-        "format": "best[height<=720]/best",
+        "format": "best[height<=720]/best[ext=mp4]/best",
         "quiet": True,
         "no_warnings": True,
         "extractaudio": False,
@@ -177,20 +198,88 @@ def get_ydl_opts(url: str) -> dict:
         "outtmpl": "%(id)s.%(ext)s",
         "writesubtitles": False,
         "writeautomaticsub": False,
+        "no_check_certificate": True,
+        "prefer_insecure": True,
+        # Добавляем User-Agent для обхода блокировок
+        "http_headers": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-us,en;q=0.5",
+            "Accept-Encoding": "gzip,deflate",
+            "Accept-Charset": "ISO-8859-1,utf-8;q=0.7,*;q=0.7",
+            "Keep-Alive": "115",
+            "Connection": "keep-alive",
+        },
+        # Дополнительные настройки для обхода ограничений
+        "socket_timeout": 30,
+        "retries": 3,
+        "fragment_retries": 3,
+        "retry_sleep_functions": {
+            "http": lambda n: min(4**n, 60),
+            "fragment": lambda n: min(4**n, 60),
+        }
     }
     
-    # Добавляем cookies если они есть
-    if "instagram.com" in url and IG_COOKIES_FILE and Path(IG_COOKIES_FILE).exists():
-        opts["cookiefile"] = IG_COOKIES_FILE
-    elif "tiktok.com" in url and TT_COOKIES_FILE and Path(TT_COOKIES_FILE).exists():
-        opts["cookiefile"] = TT_COOKIES_FILE
-    elif ("youtube.com" in url or "youtu.be" in url) and YT_COOKIES_FILE and Path(YT_COOKIES_FILE).exists():
-        # Дополнительно проверим для youtube.com/shorts
+    # Специфичные настройки для разных платформ
+    if "instagram.com" in url:
+        opts.update({
+            "format": "best[height<=720]/best",
+            "extractor_args": {
+                "instagram": {
+                    "api_version": "v1",
+                }
+            }
+        })
+        # Используем cookies из переменной окружения или файла
+        if IG_COOKIES_CONTENT:
+            temp_cookies = create_temp_cookies_file(IG_COOKIES_CONTENT)
+            if temp_cookies:
+                opts["cookiefile"] = temp_cookies
+        elif IG_COOKIES_FILE and Path(IG_COOKIES_FILE).exists():
+            opts["cookiefile"] = IG_COOKIES_FILE
+            
+    elif "tiktok.com" in url or "vm.tiktok.com" in url or "vt.tiktok.com" in url:
+        opts.update({
+            "format": "best[height<=720]/best",
+            "extractor_args": {
+                "tiktok": {
+                    "api_hostname": "api.tiktokv.com",
+                }
+            }
+        })
+        # Используем cookies из переменной окружения или файла
+        if TT_COOKIES_CONTENT:
+            temp_cookies = create_temp_cookies_file(TT_COOKIES_CONTENT)
+            if temp_cookies:
+                opts["cookiefile"] = temp_cookies
+        elif TT_COOKIES_FILE and Path(TT_COOKIES_FILE).exists():
+            opts["cookiefile"] = TT_COOKIES_FILE
+            
+    elif "youtube.com" in url or "youtu.be" in url:
+        # Проверяем, что это Shorts
         parsed = urlparse(url)
         if "youtu.be" in parsed.netloc or "/shorts" in parsed.path:
-            opts["cookiefile"] = YT_COOKIES_FILE
+            opts.update({
+                "format": "best[height<=720]/best[ext=mp4]/best",
+            })
+            # Используем cookies из переменной окружения или файла
+            if YT_COOKIES_CONTENT:
+                temp_cookies = create_temp_cookies_file(YT_COOKIES_CONTENT)
+                if temp_cookies:
+                    opts["cookiefile"] = temp_cookies
+            elif YT_COOKIES_FILE and Path(YT_COOKIES_FILE).exists():
+                opts["cookiefile"] = YT_COOKIES_FILE
         elif "youtube.com" in parsed.netloc:
-            opts["cookiefile"] = YT_COOKIES_FILE
+            opts.update({
+                "format": "best[height<=720]/best[ext=mp4]/best",
+            })
+            # Используем cookies из переменной окружения или файла
+            if YT_COOKIES_CONTENT:
+                temp_cookies = create_temp_cookies_file(YT_COOKIES_CONTENT)
+                if temp_cookies:
+                    opts["cookiefile"] = temp_cookies
+            elif YT_COOKIES_FILE and Path(YT_COOKIES_FILE).exists():
+                opts["cookiefile"] = YT_COOKIES_FILE
     
     return opts
 
@@ -208,25 +297,72 @@ def _sync_download(url: str) -> Tuple[Optional[Path], Optional[dict]]:
         opts = get_ydl_opts(url)
         opts["outtmpl"] = str(temp_dir / "%(id)s.%(ext)s")
         
+        log.info(f"Starting download for URL: {url}")
+        log.info(f"Using yt-dlp options: {opts}")
+        
         with YoutubeDL(opts) as ydl:
             try:
+                # Сначала попытаемся получить информацию без загрузки
+                log.info("Extracting video info...")
+                info = ydl.extract_info(url, download=False)
+                
+                if not info:
+                    log.error("Failed to extract video info")
+                    return None, None
+                    
+                log.info(f"Video info extracted: title='{info.get('title', 'N/A')}', duration={info.get('duration', 'N/A')}")
+                
+                # Теперь загружаем
+                log.info("Starting video download...")
                 info = ydl.extract_info(url, download=True)
+                
                 if info:
                     # Найти скачанный файл
                     video_path = Path(ydl.prepare_filename(info))
+                    log.info(f"Expected file path: {video_path}")
+                    
                     if video_path.exists():
+                        log.info(f"Video downloaded successfully: {video_path} (size: {video_path.stat().st_size} bytes)")
                         return video_path, info
                     else:
                         # Попробовать найти файл в temp_dir
+                        log.warning("Expected file not found, searching in temp directory...")
+                        video_files = list(temp_dir.glob("*"))
+                        log.info(f"Files in temp directory: {video_files}")
+                        
                         for file in temp_dir.glob("*"):
-                            if file.is_file() and file.suffix in ['.mp4', '.mkv', '.webm', '.mov']:
+                            if file.is_file() and file.suffix.lower() in ['.mp4', '.mkv', '.webm', '.mov', '.avi', '.flv']:
+                                log.info(f"Found video file: {file} (size: {file.stat().st_size} bytes)")
                                 return file, info
+                        
+                        log.error("No video files found in temp directory")
+                        
                 return None, None
+                
             except DownloadError as e:
-                log.error(f"Download error: {e}")
+                error_msg = str(e).lower()
+                log.error(f"yt-dlp Download error: {e}")
+                
+                # Обработка специфичных ошибок
+                if "private" in error_msg or "login" in error_msg:
+                    log.error("Video is private or requires authentication")
+                elif "not available" in error_msg or "removed" in error_msg:
+                    log.error("Video is not available or has been removed")
+                elif "geo" in error_msg or "country" in error_msg:
+                    log.error("Video is geo-blocked")
+                elif "copyright" in error_msg:
+                    log.error("Video is blocked due to copyright")
+                else:
+                    log.error(f"Unknown download error: {error_msg}")
+                    
                 return None, None
+                
+            except Exception as e:
+                log.error(f"Unexpected error during yt-dlp extraction: {e}")
+                return None, None
+                
     except Exception as e:
-        log.error(f"Unexpected error during download: {e}")
+        log.error(f"Unexpected error during download setup: {e}")
         return None, None
     finally:
         # Cleanup temporary directory and all its contents
@@ -290,22 +426,41 @@ async def extract_recipe_from_video(video_info: dict) -> str:
 
 def is_supported_url(url: str) -> bool:
     """Проверить, поддерживается ли URL"""
-    supported_domains = [
-        'instagram.com', 'tiktok.com', 'youtube.com', 'youtu.be',
-        'vm.tiktok.com', 'vt.tiktok.com'
+    supported_patterns = [
+        # Instagram
+        'instagram.com/reel', 'instagram.com/p/', 'instagram.com/tv/',
+        # TikTok
+        'tiktok.com/@', 'tiktok.com/t/', 'vm.tiktok.com', 'vt.tiktok.com',
+        # YouTube
+        'youtube.com/shorts/', 'youtu.be/', 'youtube.com/watch?v=',
     ]
     
     try:
-        parsed = urlparse(url)
+        parsed = urlparse(url.lower())
         domain = parsed.netloc.lower()
-        return any(supported in domain for supported in supported_domains)
+        path = parsed.path.lower()
+        full_url = f"{domain}{path}"
+        
+        # Проверяем основные домены
+        if any(domain in ['instagram.com', 'www.instagram.com'] for domain in [domain]):
+            return '/reel' in path or '/p/' in path or '/tv/' in path
+        
+        if any(domain in ['tiktok.com', 'www.tiktok.com', 'vm.tiktok.com', 'vt.tiktok.com'] for domain in [domain]):
+            return True
+            
+        if any(domain in ['youtube.com', 'www.youtube.com', 'youtu.be', 'www.youtu.be'] for domain in [domain]):
+            return '/shorts/' in path or 'youtu.be' in domain or 'v=' in parsed.query
+        
+        # Дополнительная проверка по паттернам
+        return any(pattern in full_url for pattern in supported_patterns)
+        
     except (ValueError, TypeError, AttributeError) as e:
         log.warning(f"Invalid URL format: {url}, error: {e}")
         return False
 
 # Welcome текст
 WELCOME = """
-🔥 **Recipe Bot** — сохраняю рецепт из короткого видео!
+🔥 **Recipe Bot** — извлекаю рецепт из короткого видео!
 
 Бесплатно доступно **6** роликов.
 Тарифы (скоро):
@@ -313,12 +468,17 @@ WELCOME = """
 - 10 роликов — 49 ₽
 - 200 роликов + 30 дн. — 199 ₽
 
-Пришлите ссылку на Reels / Shorts / TikTok, а остальное я сделаю сам!
+Пришлите ссылку на видео с рецептом, а я скачаю его и извлеку рецепт!
 
-**Поддерживаемые платформы:**
-- Instagram Reels
-- TikTok
-- YouTube Shorts
+**Поддерживаемые форматы:**
+📱 Instagram: Reels (/reel/, /p/, /tv/)
+🎵 TikTok: @username/video/, vm.tiktok.com, vt.tiktok.com
+📺 YouTube: Shorts (/shorts/), обычные видео
+
+**Пример ссылок:**
+• instagram.com/reel/xyz...
+• tiktok.com/@user/video/123...
+• youtube.com/shorts/abc...
 """.strip()
 
 # Handlers
@@ -352,7 +512,15 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     # Проверка поддерживаемых URL
     if not is_supported_url(url):
         await update.message.reply_text(
-            "❌ Поддерживаются только ссылки на Instagram Reels, TikTok и YouTube Shorts",
+            "❌ Неподдерживаемый формат ссылки!\n\n"
+            "✅ Поддерживаются:\n"
+            "📱 Instagram: /reel/, /p/, /tv/\n"
+            "🎵 TikTok: @username/video/, vm.tiktok.com, vt.tiktok.com\n"
+            "📺 YouTube: /shorts/, обычные видео\n\n"
+            "Примеры правильных ссылок:\n"
+            "• instagram.com/reel/CXXxXxX...\n"
+            "• tiktok.com/@username/video/123...\n"
+            "• youtube.com/shorts/abc123...",
             parse_mode=None
         )
         return
@@ -400,10 +568,19 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         # Явный лог, если video_path или video_info отсутствуют
         if not video_path or not video_path.exists():
             log.error(f"Download failed or file does not exist for url: {url}")
-            await update.message.reply_text(
-                "❌ Не удалось скачать видео. Возможно, оно приватное или требует аутентификацию.",
-                parse_mode=None
-            )
+            
+            # Определяем тип ошибки на основе платформы
+            if "instagram.com" in url:
+                error_msg = "❌ Не удалось скачать Instagram Reels. Возможные причины:\n• Видео приватное или требует входа в аккаунт\n• Видео было удалено\n• Временные проблемы с Instagram API"
+            elif "tiktok.com" in url:
+                error_msg = "❌ Не удалось скачать TikTok видео. Возможные причины:\n• Видео приватное\n• Видео недоступно в вашем регионе\n• Видео было удалено автором"
+            elif "youtube.com" in url or "youtu.be" in url:
+                error_msg = "❌ Не удалось скачать YouTube видео. Возможные причины:\n• Видео приватное или ограничено по возрасту\n• Видео недоступно в вашем регионе\n• Проблемы с авторскими правами"
+            else:
+                error_msg = "❌ Не удалось скачать видео. Попробуйте другую ссылку."
+                
+            await update.message.reply_text(error_msg, parse_mode=None)
+            
             # Отправляем fallback_md (текстовый блок)
             await update.message.reply_text(
                 fallback_md,
@@ -411,10 +588,11 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
                 disable_web_page_preview=True,
             )
             return
+            
         if not video_info:
             log.error(f"Download returned no video_info for url: {url}")
             await update.message.reply_text(
-                "❌ Не удалось получить информацию о видео. Возможно, оно приватное или требует аутентификацию.",
+                "❌ Не удалось получить информацию о видео. Попробуйте другую ссылку.",
                 parse_mode=None
             )
             await update.message.reply_text(
@@ -484,6 +662,20 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
     except Exception as e:
         log.error(f"Error processing URL {url}: {e}")
+        
+        # Определяем тип ошибки и даем соответствующее сообщение
+        error_type = type(e).__name__
+        if "timeout" in str(e).lower():
+            error_msg = "⏱️ Превышено время ожидания. Попробуйте позже или другую ссылку."
+        elif "network" in str(e).lower() or "connection" in str(e).lower():
+            error_msg = "🌐 Проблемы с сетью. Проверьте соединение и повторите попытку."
+        elif "permission" in str(e).lower() or "access" in str(e).lower():
+            error_msg = "🔒 Ошибка доступа к видео. Возможно, оно приватное."
+        else:
+            error_msg = f"❌ Произошла ошибка при обработке видео.\nТип ошибки: {error_type}\n\nПопробуйте другую ссылку или повторите попытку позже."
+        
+        await update.message.reply_text(error_msg, parse_mode=None)
+        
         # fallback_md уже определён (на случай если видео_info нет — минимальный шаблон)
         await update.message.reply_text(
             fallback_md,
