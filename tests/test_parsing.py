@@ -36,12 +36,20 @@ setattr(telegram_ext, "MessageHandler", object)
 setattr(telegram_ext, "filters", object)
 
 import pytest
+import logging
 
 # Set required environment variables for importing bot
 os.environ.setdefault("TELEGRAM_TOKEN", "test")
 os.environ.setdefault("OPENAI_API_KEY", "test")
 
-from bot import parse_recipe_blocks, is_supported_url, format_recipe_markdown, escape_markdown_v2
+import bot
+from bot import (
+    parse_recipe_blocks,
+    is_supported_url,
+    format_recipe_markdown,
+    escape_markdown_v2,
+    log,
+)
 
 
 def test_parse_recipe_blocks_typical():
@@ -110,5 +118,24 @@ def test_format_recipe_markdown_escapes_url():
     url = "https://example.com/watch?v=abc_def(1)"
     md = format_recipe_markdown(recipe, original_url=url)
     assert f"[Оригинал]({escape_markdown_v2(url)})" in md
+
+
+def test_is_supported_url_logs_warning_on_bad_url(monkeypatch, caplog):
+    def bad_parse(url):
+        raise ValueError("bad url")
+
+    monkeypatch.setattr(bot, "urlparse", bad_parse)
+    with caplog.at_level(logging.WARNING, logger=log.name):
+        assert not is_supported_url("bad")
+    assert any("Invalid URL format" in r.message for r in caplog.records)
+
+
+def test_is_supported_url_propagates_unexpected(monkeypatch):
+    def boom(url):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(bot, "urlparse", boom)
+    with pytest.raises(RuntimeError):
+        is_supported_url("bad")
 
 
