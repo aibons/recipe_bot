@@ -605,7 +605,13 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             
             # Определяем тип ошибки на основе платформы
             if "instagram.com" in url:
-                error_msg = "❌ Не удалось скачать Instagram Reels. Возможные причины:\n• Видео приватное или требует входа в аккаунт\n• Видео было удалено\n• Временные проблемы с Instagram API"
+                error_msg = (
+                    "❌ Не удалось скачать Instagram Reels. Возможные причины:\n"
+                    "• Видео приватное или требует входа в аккаунт "
+                    "(добавьте cookies через IG_COOKIES_CONTENT)\n"
+                    "• Видео было удалено\n"
+                    "• Временные проблемы с Instagram API"
+                )
             elif "tiktok.com" in url:
                 error_msg = "❌ Не удалось скачать TikTok видео. Возможные причины:\n• Видео приватное\n• Видео недоступно в вашем регионе\n• Видео было удалено автором"
             elif "youtube.com" in url or "youtu.be" in url:
