@@ -64,4 +64,4 @@ def test_cmd_start_sends_welcome():
     asyncio.run(bot.cmd_start(update, None))
 
     assert recorded.get('text') == bot.WELCOME
-    assert recorded.get('parse_mode') == bot.constants.ParseMode.MARKDOWN_V2
+    assert recorded.get('parse_mode') is None
