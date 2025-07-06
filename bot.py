@@ -334,8 +334,10 @@ def _sync_download(url: str) -> Tuple[Optional[Path], Optional[dict]]:
     """Синхронная функция для скачивания видео"""
     import shutil
     temp_dir = Path(tempfile.mkdtemp())
-    
+
     temp_cookie = None
+    video_path: Optional[Path] = None
+    downloaded = False
     try:
         opts, temp_cookie = get_ydl_opts(url)
         opts["outtmpl"] = str(temp_dir / "%(id)s.%(ext)s")
@@ -366,6 +368,7 @@ def _sync_download(url: str) -> Tuple[Optional[Path], Optional[dict]]:
                     
                     if video_path.exists():
                         log.info(f"Video downloaded successfully: {video_path} (size: {video_path.stat().st_size} bytes)")
+                        downloaded = True
                         return video_path, info
                     else:
                         # Попробовать найти файл в temp_dir
@@ -376,6 +379,8 @@ def _sync_download(url: str) -> Tuple[Optional[Path], Optional[dict]]:
                         for file in temp_dir.glob("*"):
                             if file.is_file() and file.suffix.lower() in ['.mp4', '.mkv', '.webm', '.mov', '.avi', '.flv']:
                                 log.info(f"Found video file: {file} (size: {file.stat().st_size} bytes)")
+                                video_path = file
+                                downloaded = True
                                 return file, info
                         
                         log.error("No video files found in temp directory")
@@ -411,6 +416,8 @@ def _sync_download(url: str) -> Tuple[Optional[Path], Optional[dict]]:
     finally:
         if temp_cookie:
             Path(temp_cookie).unlink(missing_ok=True)
+        if not downloaded:
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 async def extract_recipe_from_video(video_info: dict) -> str:
