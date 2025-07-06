@@ -305,13 +305,14 @@ async def extract_recipe_from_video(info: dict) -> str:
 # ---------------------------------------------------------------------------
 
 WELCOME = (
-    f"Привет\\! Отправь ссылку на короткое видео, и я пришлю рецепт\\. "
-    f"Бесплатно доступно {FREE_LIMIT} роликов\."
+    "🔥 Recipe Bot — извлекаю рецепт из короткого видео!\n\n"
+    "Бесплатно доступно 6 роликов.\n\n"
+    "Пришлите ссылку на видео с рецептом, а я скачаю его и извлеку рецепт!"
 )
 
 
 async def cmd_start(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(WELCOME, parse_mode=constants.ParseMode.MARKDOWN_V2)
+    await update.message.reply_text(WELCOME)
 
 
 async def cmd_status(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
@@ -330,8 +331,7 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
     if not is_supported_url(url):
         await update.message.reply_text(
-            "Неподдерживаемая ссылка\. Пришлите Instagram Reels, TikTok или YouTube Shorts",
-            parse_mode=constants.ParseMode.MARKDOWN_V2,
+            "Неподдерживаемая ссылка. Пришлите Instagram Reels, TikTok или YouTube Shorts"
         )
         return
 
@@ -339,10 +339,18 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("Бесплатный лимит исчерпан")
         return
 
-    await update.message.chat.send_action(constants.ChatAction.UPLOAD_VIDEO)
-    video_path, info = await download_video(url)
+    await update.message.reply_text("🏃 Скачиваю...")
+
+    try:
+        video_path, info = await download_video(url)
+    except Exception as exc:
+        log.error(f"Download exception: {exc}")
+        video_path, info = None, None
+
     if not video_path or not info or not video_path.exists():
-        await update.message.reply_text("Не удалось скачать видео")
+        await update.message.reply_text(
+            "❌ Не удалось скачать видео. Возможные причины: приватное видео, требуется вход в аккаунт, видео было удалено или временные проблемы с платформой."
+        )
         return
 
     with open(video_path, "rb") as f:
@@ -351,18 +359,18 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     recipe_text = await extract_recipe_from_video(info)
     blocks = parse_recipe_blocks(recipe_text)
     if not (blocks.get("title") or blocks.get("ingredients") or blocks.get("steps")):
-        blocks = {
-            "title": "Не удалось извлечь рецепт",
-            "ingredients": [],
-            "steps": [],
-            "extra": "Попробуйте посмотреть описание ролика самостоятельно",
-        }
-    md = format_recipe_markdown(
-        blocks,
-        original_url=info.get("webpage_url", url),
-        duration=str(int(info.get("duration", 0))) + " сек." if info.get("duration") else "",
-    )
-    await update.message.reply_text(md, parse_mode=constants.ParseMode.MARKDOWN_V2, disable_web_page_preview=True)
+        await update.message.reply_text("Не удалось извлечь рецепт из видео")
+    else:
+        md = format_recipe_markdown(
+            blocks,
+            original_url=info.get("webpage_url", url),
+            duration=str(int(info.get("duration", 0))) + " сек." if info.get("duration") else "",
+        )
+        await update.message.reply_text(
+            md,
+            parse_mode=constants.ParseMode.MARKDOWN_V2,
+            disable_web_page_preview=True,
+        )
 
     if uid != OWNER_ID:
         increment_quota(uid)
