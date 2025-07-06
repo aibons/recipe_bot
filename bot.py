@@ -151,7 +151,8 @@ def is_supported_url(url: str) -> bool:
         if "youtube.com" in host or "youtu.be" in host:
             return "/shorts/" in path or "v=" in parsed.query or "youtu.be" in host
         return False
-    except Exception:
+    except (ValueError, TypeError, AttributeError) as e:
+        log.warning(f"Invalid URL format: {url}, error: {e}")
         return False
 
 
