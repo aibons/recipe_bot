@@ -13,9 +13,10 @@ Recipe Bot is a Telegram bot that downloads short cooking videos (Instagram Reel
    ```bash
    pip install -r requirements.txt
    ```
-3. Set environment variables `TELEGRAM_TOKEN`, `OPENAI_API_KEY`, and `WEBHOOK_URL` (required for deployment, see [DEPLOYMENT.md](DEPLOYMENT.md) for details). Optional variables for cookies and other settings are also described there.
+3. Install [ffmpeg](https://ffmpeg.org/) and ensure it is available in your `PATH`.
+4. Set environment variables `TELEGRAM_TOKEN`, `OPENAI_API_KEY`, and `WEBHOOK_URL` (required for deployment, see [DEPLOYMENT.md](DEPLOYMENT.md) for details). Optional variables for cookies and other settings are also described there.
    If one of these variables is missing, the bot logs an error and exits.
-4. Run the bot:
+5. Run the bot:
    ```bash
    python bot.py
    ```
