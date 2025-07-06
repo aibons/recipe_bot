@@ -171,6 +171,7 @@ IG_COOKIES_CONTENT = os.getenv("IG_COOKIES_CONTENT", "")
 TT_COOKIES_CONTENT = os.getenv("TT_COOKIES_CONTENT", "")
 YT_COOKIES_CONTENT = os.getenv("YT_COOKIES_CONTENT", "")
 
+# Path to a cookies file exported from the browser (e.g. via "Get cookies.txt")
 IG_COOKIES_FILE = os.getenv("IG_COOKIES_FILE", "cookies_instagram.txt")
 TT_COOKIES_FILE = os.getenv("TT_COOKIES_FILE", "cookies_tiktok.txt")
 YT_COOKIES_FILE = os.getenv("YT_COOKIES_FILE", "cookies_youtube.txt")
@@ -229,7 +230,8 @@ def get_ydl_opts(url: str) -> Tuple[dict, Optional[str]]:
     if "instagram.com" in url:
         if IG_COOKIES_CONTENT:
             temp_cookie = create_temp_cookies_file(IG_COOKIES_CONTENT)
-        elif Path(IG_COOKIES_FILE).exists():
+            opts["cookiefile"] = temp_cookie
+        elif IG_COOKIES_FILE:
             opts["cookiefile"] = IG_COOKIES_FILE
     elif "tiktok.com" in url:
         if TT_COOKIES_CONTENT:
@@ -365,9 +367,14 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         video_path, info = None, None
 
     if not video_path or not info or not video_path.exists():
-        await update.message.reply_text(
-            "❌ Не удалось скачать видео. Возможные причины: приватное видео, требуется вход в аккаунт, видео было удалено или временные проблемы с платформой."
-        )
+        if "instagram.com" in url:
+            await update.message.reply_text(
+                "❌ Не удалось скачать видео с Instagram. Возможно, требуется авторизация или вы временно ограничены. Убедитесь, что IG_COOKIES_FILE указывает на актуальные cookies и попробуйте позже."
+            )
+        else:
+            await update.message.reply_text(
+                "❌ Не удалось скачать видео. Возможные причины: приватное видео, требуется вход в аккаунт, видео было удалено или временные проблемы с платформой."
+            )
         return
 
     with open(video_path, "rb") as f:

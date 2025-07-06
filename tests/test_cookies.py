@@ -116,3 +116,50 @@ def test_sync_download_uses_temp_cookies(monkeypatch, tmp_path, var, url):
         path.unlink()
     if path.parent.exists():
         path.parent.rmdir()
+
+
+def test_sync_download_uses_cookiefile_from_env(monkeypatch, tmp_path):
+    def fake_mkdtemp():
+        d = tmp_path / "dl"
+        d.mkdir(exist_ok=True)
+        return str(d)
+
+    monkeypatch.setattr(bot.tempfile, "mkdtemp", fake_mkdtemp)
+
+    last_opts = {}
+
+    class DummyDL:
+        def __init__(self, opts):
+            last_opts.clear()
+            last_opts.update(opts)
+            self.opts = opts
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def extract_info(self, url, download=False):
+            return {"id": "vid", "ext": "mp4"}
+
+        def prepare_filename(self, info):
+            outtmpl = self.opts["outtmpl"]
+            path = Path(outtmpl.replace("%(id)s", info["id"]).replace("%(ext)s", info["ext"]))
+            Path(path).write_text("video")
+            return path
+
+    monkeypatch.setattr(bot, "YoutubeDL", DummyDL)
+
+    monkeypatch.setattr(bot, "IG_COOKIES_CONTENT", "")
+    monkeypatch.setattr(bot, "IG_COOKIES_FILE", "/tmp/ig_cookies.txt")
+
+    path, info = bot._sync_download("https://www.instagram.com/p/abc/")
+
+    assert path is not None and info is not None
+    assert last_opts.get("cookiefile") == "/tmp/ig_cookies.txt"
+
+    if path.exists():
+        path.unlink()
+    if path.parent.exists():
+        path.parent.rmdir()
