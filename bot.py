@@ -237,9 +237,15 @@ IG_COOKIES_CONTENT = os.getenv("IG_COOKIES_CONTENT", "")
 TT_COOKIES_CONTENT = os.getenv("TT_COOKIES_CONTENT", "")
 YT_COOKIES_CONTENT = os.getenv("YT_COOKIES_CONTENT", "")
 
-IG_COOKIES_FILE = os.getenv("IG_COOKIES_FILE", str(BASE_DIR / "cookies_instagram.txt"))
-TT_COOKIES_FILE = os.getenv("TT_COOKIES_FILE", str(BASE_DIR / "cookies_tiktok.txt"))
-YT_COOKIES_FILE = os.getenv("YT_COOKIES_FILE", str(BASE_DIR / "cookies_youtube.txt"))
+IG_COOKIES_FILE = Path(
+    os.getenv("IG_COOKIES_FILE", str(BASE_DIR / "cookies_instagram.txt"))
+).resolve()
+TT_COOKIES_FILE = Path(
+    os.getenv("TT_COOKIES_FILE", str(BASE_DIR / "cookies_tiktok.txt"))
+).resolve()
+YT_COOKIES_FILE = Path(
+    os.getenv("YT_COOKIES_FILE", str(BASE_DIR / "cookies_youtube.txt"))
+).resolve()
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
@@ -295,18 +301,18 @@ def get_ydl_opts(url: str) -> Tuple[dict, Optional[str]]:
     if "instagram.com" in url:
         if IG_COOKIES_CONTENT:
             temp_cookie = create_temp_cookies_file(IG_COOKIES_CONTENT)
-        elif Path(IG_COOKIES_FILE).exists():
-            opts["cookiefile"] = IG_COOKIES_FILE
+        elif IG_COOKIES_FILE.exists():
+            opts["cookiefile"] = str(IG_COOKIES_FILE)
     elif "tiktok.com" in url:
         if TT_COOKIES_CONTENT:
             temp_cookie = create_temp_cookies_file(TT_COOKIES_CONTENT)
-        elif Path(TT_COOKIES_FILE).exists():
-            opts["cookiefile"] = TT_COOKIES_FILE
+        elif TT_COOKIES_FILE.exists():
+            opts["cookiefile"] = str(TT_COOKIES_FILE)
     elif "youtube.com" in url or "youtu.be" in url:
         if YT_COOKIES_CONTENT:
             temp_cookie = create_temp_cookies_file(YT_COOKIES_CONTENT)
-        elif Path(YT_COOKIES_FILE).exists():
-            opts["cookiefile"] = YT_COOKIES_FILE
+        elif YT_COOKIES_FILE.exists():
+            opts["cookiefile"] = str(YT_COOKIES_FILE)
     if temp_cookie:
         opts["cookiefile"] = temp_cookie
     return opts, temp_cookie
@@ -461,19 +467,19 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     if "instagram.com" in url:
-        if not IG_COOKIES_CONTENT and not Path(IG_COOKIES_FILE).exists():
+        if not IG_COOKIES_CONTENT and not IG_COOKIES_FILE.exists():
             msg = "❌ Не удалось скачать видео. Не найден файл cookies для платформы Instagram."
             log.error(msg)
             await update.message.reply_text(msg)
             return
     elif "tiktok.com" in url:
-        if not TT_COOKIES_CONTENT and not Path(TT_COOKIES_FILE).exists():
+        if not TT_COOKIES_CONTENT and not TT_COOKIES_FILE.exists():
             msg = "❌ Не удалось скачать видео. Не найден файл cookies для платформы TikTok."
             log.error(msg)
             await update.message.reply_text(msg)
             return
     elif "youtube.com" in url or "youtu.be" in url:
-        if not YT_COOKIES_CONTENT and not Path(YT_COOKIES_FILE).exists():
+        if not YT_COOKIES_CONTENT and not YT_COOKIES_FILE.exists():
             msg = "❌ Не удалось скачать видео. Не найден файл cookies для платформы YouTube."
             log.error(msg)
             await update.message.reply_text(msg)
