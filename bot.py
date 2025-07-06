@@ -246,11 +246,12 @@ def get_ydl_opts(url: str) -> Tuple[dict, Optional[str]]:
     return opts, temp_cookie
 
 
-def _sync_download(url: str) -> Tuple[Optional[Path], Optional[dict]]:
+def _sync_download(url: str) -> Tuple[Optional[Path], Optional[dict], Optional[str]]:
     temp_dir = Path(tempfile.mkdtemp())
     temp_cookie = None
     path: Optional[Path] = None
     info: Optional[dict] = None
+    error: Optional[str] = None
     try:
         opts, temp_cookie = get_ydl_opts(url)
         opts["outtmpl"] = str(temp_dir / "%(id)s.%(ext)s")
@@ -262,10 +263,11 @@ def _sync_download(url: str) -> Tuple[Optional[Path], Optional[dict]]:
                     if f.is_file():
                         path = f
                         break
-        return path, info
+        return path, info, None
     except DownloadError as e:
-        log.error(f"Download error: {e}")
-        return None, None
+        error = str(e)
+        log.error(f"Download error: {error}")
+        return None, None, error
     finally:
         if temp_cookie:
             Path(temp_cookie).unlink(missing_ok=True)
@@ -273,7 +275,7 @@ def _sync_download(url: str) -> Tuple[Optional[Path], Optional[dict]]:
             shutil.rmtree(temp_dir, ignore_errors=True)
 
 
-async def download_video(url: str) -> Tuple[Optional[Path], Optional[dict]]:
+async def download_video(url: str) -> Tuple[Optional[Path], Optional[dict], Optional[str]]:
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _sync_download, url)
 
@@ -356,13 +358,43 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("Бесплатный лимит исчерпан")
         return
 
+    if "instagram.com" in url:
+        if not IG_COOKIES_CONTENT and not Path(IG_COOKIES_FILE).exists():
+            msg = "❌ Не удалось скачать видео. Не найден файл cookies для платформы Instagram."
+            log.error(msg)
+            await update.message.reply_text(msg)
+            return
+    elif "tiktok.com" in url:
+        if not TT_COOKIES_CONTENT and not Path(TT_COOKIES_FILE).exists():
+            msg = "❌ Не удалось скачать видео. Не найден файл cookies для платформы TikTok."
+            log.error(msg)
+            await update.message.reply_text(msg)
+            return
+    elif "youtube.com" in url or "youtu.be" in url:
+        if not YT_COOKIES_CONTENT and not Path(YT_COOKIES_FILE).exists():
+            msg = "❌ Не удалось скачать видео. Не найден файл cookies для платформы YouTube."
+            log.error(msg)
+            await update.message.reply_text(msg)
+            return
+
     await update.message.reply_text("🏃 Скачиваю...")
 
     try:
-        video_path, info = await download_video(url)
+        video_path, info, err = await download_video(url)
     except Exception as exc:
         log.error(f"Download exception: {exc}", exc_info=True)
-        video_path, info = None, None
+        video_path, info, err = None, None, str(exc)
+
+    if err:
+        emsg = err.lower()
+        if "private" in emsg:
+            reason = "Видео приватное или требует входа в аккаунт."
+        elif "403" in emsg or "forbidden" in emsg or "login" in emsg or "sign in" in emsg:
+            reason = "Требуется вход в аккаунт."
+        else:
+            reason = err
+        await update.message.reply_text(f"❌ Не удалось скачать видео. {reason}")
+        return
 
     if not video_path or not info or not video_path.exists():
         await update.message.reply_text(

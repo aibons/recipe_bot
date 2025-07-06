@@ -67,8 +67,9 @@ def test_sync_download_cleans_temp_dir_on_failure(monkeypatch, tmp_path):
 
     monkeypatch.setattr(bot, "YoutubeDL", DummyDL)
 
-    path, info = bot._sync_download("http://example.com")
+    path, info, err = bot._sync_download("http://example.com")
     assert path is None and info is None
+    assert err is not None
 
     for d in created:
         assert not Path(d).exists()
