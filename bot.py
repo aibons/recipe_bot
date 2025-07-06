@@ -20,6 +20,7 @@ import textwrap
 import tempfile
 import shutil
 import os
+import sys
 from pathlib import Path
 from urllib.parse import urlparse
 from typing import Optional, Tuple
@@ -146,10 +147,20 @@ load_dotenv()
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
-if not TOKEN:
-    raise ValueError("TELEGRAM_TOKEN environment variable is required")
-if not OPENAI_API_KEY:
-    raise ValueError("OPENAI_API_KEY environment variable is required")
+def validate_env() -> bool:
+    """Check required environment variables are present."""
+    ok = True
+    if not os.environ.get("TELEGRAM_TOKEN"):
+        log.error(
+            "Missing TELEGRAM_TOKEN. Set it via the TELEGRAM_TOKEN environment variable."
+        )
+        ok = False
+    if not os.environ.get("OPENAI_API_KEY"):
+        log.error(
+            "Missing OPENAI_API_KEY. Set it via the OPENAI_API_KEY environment variable."
+        )
+        ok = False
+    return ok
 
 # Cookie файлы (опционально)
 IG_COOKIES_FILE = os.getenv("IG_COOKIES_FILE", "cookies_instagram.txt")
@@ -769,6 +780,8 @@ def create_web_app(application: Application) -> web.Application:
 
 async def main() -> None:
     """Основная функция"""
+    if not validate_env():
+        sys.exit(1)
     init_db()
     
     # Создаем Telegram приложение
