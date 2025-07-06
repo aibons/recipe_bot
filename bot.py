@@ -1,31 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
-"""
-recipe_bot – Telegram-бот, который скачивает короткие ролики
-(Instagram Reels / TikTok / YouTube Shorts) и присылает их вместе
-с рецептом. Работает на python-telegram-bot v22.
-"""
-
-# Если ты деплоишь на Render/сервер:
-# 1. В настройках Render укажи переменную окружения WEBHOOK_URL вида:
-#    https://recipe-bot-q839.onrender.com/
-#    (или актуальный URL твоего Render-сервиса)
+"""Telegram bot that extracts recipes from short cooking videos."""
 
 from __future__ import annotations
+
 import asyncio
 import logging
-import sqlite3
-import textwrap
-import tempfile
-import shutil
 import os
-import sys
+import shutil
+import sqlite3
+import tempfile
 from pathlib import Path
-from urllib.parse import urlparse
 from typing import Optional, Tuple
+from urllib.parse import urlparse
 
-# third-party
 from aiohttp import web
 from dotenv import load_dotenv
 from yt_dlp import YoutubeDL
@@ -33,96 +21,99 @@ from yt_dlp.utils import DownloadError
 import openai
 
 from telegram import Update, constants
-# third-party
 from telegram.ext import (
-    Application, ContextTypes,
-    CommandHandler, MessageHandler, filters,
+    Application,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
 )
 
-# === Markdown utils and recipe block parsing ===
-def escape_markdown_v2(text: str) -> str:
-    """Экранирует спецсимволы для Markdown V2 Telegram"""
-    chars = r"\_*[]()~`>#+-=|{}.!"
-    return ''.join(f"\\{c}" if c in chars else c for c in text)
 
-# Парсер блоков из ответа OpenAI (markdown -> dict)
+# ---------------------------------------------------------------------------
+# Utility functions
+# ---------------------------------------------------------------------------
+
+def escape_markdown_v2(text: str) -> str:
+    """Escape Telegram Markdown V2 special characters."""
+    chars = r"\_*[]()~`>#+-=|{}.!"
+    return "".join(f"\\{c}" if c in chars else c for c in text)
+
+
 def parse_recipe_blocks(text: str) -> dict:
-    import re
-    blocks = {
-        "title": "",
-        "ingredients": [],
-        "steps": [],
-        "extra": ""
-    }
-    # Title (гибко)
-    m = re.search(r"[Рр]ецепт\:?\s*([^\n\*\_\-\:\[\]\(\)\~\`\>\#\+\=\|\{\}\.\!]*)", text)
-    if m:
-        blocks["title"] = m.group(1).strip(" *_-:[]()~`>#+=|{}.!")
-    # Ингредиенты
-    ingr = re.search(r"[Ии]нгредиенты\:?\**\n(.+?)(\n[Пп]риг|[\n\d]+\.)", text, re.DOTALL)
-    if ingr:
-        ingr_lines = [i.strip('•-*_[]()~`>#+=|{}.!').strip() for i in ingr.group(1).strip().split('\n') if i.strip()]
-        blocks["ingredients"] = ingr_lines
-    # Шаги
-    steps = re.search(r"[Пп]риготовление\:?\**\n(.+?)(\n[Дд]ополнительно|$)", text, re.DOTALL)
-    if steps:
-        steps_lines = [s.strip("0123456789. *_-:[]()~`>#+=|{}.!").strip() for s in steps.group(1).split('\n') if s.strip()]
-        blocks["steps"] = steps_lines
-    # Дополнительно
-    extra = re.search(r"[Дд]ополнительно\:?\**\n(.+)", text, re.DOTALL)
-    if extra:
-        blocks["extra"] = extra.group(1).strip()
+    """Parse a plain text recipe into blocks used by the formatter."""
+    blocks = {"title": "", "ingredients": [], "steps": [], "extra": ""}
+    current = None
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        l = line.lower()
+        if l.startswith("рецепт"):
+            parts = line.split(":", 1)
+            blocks["title"] = parts[1].strip() if len(parts) > 1 else ""
+            continue
+        if l.startswith("ингредиенты"):
+            current = "ingredients"
+            continue
+        if l.startswith("приготов") or l.startswith("шаги"):
+            current = "steps"
+            continue
+        if l.startswith("дополнительно"):
+            current = "extra"
+            continue
+
+        if current == "ingredients":
+            item = line.lstrip("-• ").strip()
+            if item.endswith('.'):
+                item = item[:-1]
+            blocks["ingredients"].append(item)
+        elif current == "steps":
+            blocks["steps"].append(line.lstrip("0123456789. "))
+        elif current == "extra":
+            if blocks["extra"]:
+                blocks["extra"] += "\n"
+            blocks["extra"] += line
     return blocks
 
+
 def format_recipe_markdown(recipe: dict, original_url: str = "", duration: str = "") -> str:
-    """Format recipe blocks using Telegram Markdown V2."""
-
-    sep = "⸻"
+    """Return recipe formatted with Telegram Markdown V2."""
     parts = []
+    sep = "⸻"
 
-    # Заголовок блюда
     title = recipe.get("title")
     if title:
-        parts.append(f"🍽️ *{escape_markdown_v2(title.strip())}*")
+        parts.append(f"🍽️ *{escape_markdown_v2(title)}*")
 
-    # Ингредиенты
     ingredients = recipe.get("ingredients") or []
     if ingredients:
         if parts:
             parts.append(sep)
         parts.append("🛒 *Ингредиенты*")
         for item in ingredients:
-            line = item.strip()
-            # Подзаголовок "Для ...:" – выводим как отдельную строку
-            if line.endswith(":"):
-                parts.append(escape_markdown_v2(line))
+            item = item.strip()
+            if item.endswith(":"):
+                parts.append(escape_markdown_v2(item))
                 continue
-
-            # Разделяем название и количество
-            if "—" in line:
-                name, qty = map(str.strip, line.split("—", 1))
-            elif "-" in line:
-                name, qty = map(str.strip, line.split("-", 1))
+            if "—" in item:
+                name, qty = item.split("—", 1)
+            elif "-" in item:
+                name, qty = item.split("-", 1)
             else:
-                name, qty = line, "по вкусу"
+                name, qty = item, "по вкусу"
+            name = name.strip() or "?"
+            qty = qty.strip() or "по вкусу"
+            parts.append(f"• {escape_markdown_v2(name)} — {escape_markdown_v2(qty)}")
 
-            if not qty:
-                qty = "по вкусу"
-
-            parts.append(
-                f"• {escape_markdown_v2(name)} — {escape_markdown_v2(qty)}"
-            )
-
-    # Шаги приготовления
     steps = recipe.get("steps") or []
     if steps:
         if parts:
             parts.append(sep)
         parts.append("👩‍🍳 *Шаги приготовления*")
-        for idx, step in enumerate(steps, 1):
-            parts.append(f"{idx}. {escape_markdown_v2(step)}")
+        for i, step in enumerate(steps, 1):
+            parts.append(f"{i}. {escape_markdown_v2(step.strip())}")
 
-    # Дополнительно
     extra = recipe.get("extra")
     if extra:
         if parts:
@@ -130,704 +121,317 @@ def format_recipe_markdown(recipe: dict, original_url: str = "", duration: str =
         parts.append("💡 *Дополнительно*")
         parts.append(escape_markdown_v2(extra))
 
-    # Оригинал
     if original_url:
         if parts:
             parts.append(sep)
-        orig_line = f"🔗 [Оригинал]({escape_markdown_v2(original_url)})"
+        line = f"🔗 [Оригинал]({escape_markdown_v2(original_url)})"
         if duration:
-            orig_line += f" {escape_markdown_v2(f'({duration})')}"
-        parts.append(orig_line)
+            line += f" {escape_markdown_v2(f'({duration})')}"
+        parts.append(line)
 
     return "\n".join(parts)
 
-# ENV
+
+# ---------------------------------------------------------------------------
+# URL helpers
+# ---------------------------------------------------------------------------
+
+def is_supported_url(url: str) -> bool:
+    """Return True if the url is from Instagram, TikTok or YouTube."""
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme not in {"http", "https"}:
+            return False
+        host = parsed.netloc.lower()
+        path = parsed.path.lower()
+        if "instagram.com" in host:
+            return "/reel/" in path or "/p/" in path or "/tv/" in path
+        if "tiktok.com" in host or host in {"vm.tiktok.com", "vt.tiktok.com"}:
+            return True
+        if "youtube.com" in host or "youtu.be" in host:
+            return "/shorts/" in path or "v=" in parsed.query or "youtu.be" in host
+        return False
+    except Exception:
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Environment and database
+# ---------------------------------------------------------------------------
+
 load_dotenv()
 
-TOKEN = os.environ.get("TELEGRAM_TOKEN")
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+TOKEN = os.getenv("TELEGRAM_TOKEN")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OWNER_ID = int(os.getenv("OWNER_ID", "0"))
+FREE_LIMIT = int(os.getenv("FREE_LIMIT", "6"))
 
-def validate_env() -> bool:
-    """Check required environment variables are present."""
-    ok = True
-    if not os.environ.get("TELEGRAM_TOKEN"):
-        log.error(
-            "Missing TELEGRAM_TOKEN. Set it via the TELEGRAM_TOKEN environment variable."
-        )
-        ok = False
-    if not os.environ.get("OPENAI_API_KEY"):
-        log.error(
-            "Missing OPENAI_API_KEY. Set it via the OPENAI_API_KEY environment variable."
-        )
-        ok = False
-    return ok
-
-# Cookie файлы (опционально)
-IG_COOKIES_FILE = os.getenv("IG_COOKIES_FILE", "cookies_instagram.txt")
-TT_COOKIES_FILE = os.getenv("TT_COOKIES_FILE", "cookies_tiktok.txt")
-YT_COOKIES_FILE = os.getenv("YT_COOKIES_FILE", "cookies_youtube.txt")
-
-# Cookie содержимое из переменных окружения (альтернатива файлам)
 IG_COOKIES_CONTENT = os.getenv("IG_COOKIES_CONTENT", "")
 TT_COOKIES_CONTENT = os.getenv("TT_COOKIES_CONTENT", "")
 YT_COOKIES_CONTENT = os.getenv("YT_COOKIES_CONTENT", "")
 
-OWNER_ID = int(os.getenv("OWNER_ID", "248610561"))
-FREE_LIMIT = int(os.getenv("FREE_LIMIT", "6"))
+IG_COOKIES_FILE = os.getenv("IG_COOKIES_FILE", "cookies_instagram.txt")
+TT_COOKIES_FILE = os.getenv("TT_COOKIES_FILE", "cookies_tiktok.txt")
+YT_COOKIES_FILE = os.getenv("YT_COOKIES_FILE", "cookies_youtube.txt")
 
-# Логирование
-log = logging.getLogger("recipe_bot")
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s | %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+log = logging.getLogger(__name__)
 
-# Глушим httpx и telegram.ext._utils.networkloop до WARNING
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("telegram.ext._utils.networkloop").setLevel(logging.WARNING)
 
 def init_db() -> None:
-    """Инициализация базы данных для отслеживания использования"""
     with sqlite3.connect("bot.db") as db:
-        db.execute("""
-            CREATE TABLE IF NOT EXISTS quota(
-                uid INTEGER PRIMARY KEY, 
-                n INTEGER DEFAULT 0
-            )
-        """)
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS quota (uid INTEGER PRIMARY KEY, n INTEGER DEFAULT 0)"""
+        )
         db.commit()
 
+
 def get_quota_usage(uid: int) -> int:
-    """Получить текущее использование квоты"""
     with sqlite3.connect("bot.db") as db:
         cur = db.execute("SELECT n FROM quota WHERE uid=?", (uid,))
         row = cur.fetchone()
         return row[0] if row else 0
 
+
 def increment_quota(uid: int) -> int:
-    """Увеличить счетчик использования и вернуть новое значение"""
     with sqlite3.connect("bot.db") as db:
         cur = db.execute("SELECT n FROM quota WHERE uid=?", (uid,))
         row = cur.fetchone()
-        current = row[0] if row else 0
-        new_count = current + 1
-        db.execute("INSERT OR REPLACE INTO quota(uid,n) VALUES(?,?)", (uid, new_count))
+        n = (row[0] if row else 0) + 1
+        db.execute("INSERT OR REPLACE INTO quota(uid,n) VALUES(?,?)", (uid, n))
         db.commit()
-        return new_count
+        return n
+
+
+# ---------------------------------------------------------------------------
+# yt-dlp helpers
+# ---------------------------------------------------------------------------
 
 def create_temp_cookies_file(content: str) -> Optional[str]:
-    """Создать временный файл cookies из содержимого переменной окружения"""
     if not content:
         return None
-    
-    try:
-        import tempfile
-        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as f:
-            f.write(content)
-            return f.name
-    except Exception as e:
-        log.error(f"Failed to create temp cookies file: {e}")
-        return None
+    fd, path = tempfile.mkstemp(suffix=".txt")
+    with os.fdopen(fd, "w") as f:
+        f.write(content)
+    return path
+
 
 def get_ydl_opts(url: str) -> Tuple[dict, Optional[str]]:
-    """Получить опции yt-dlp для конкретного URL.
-
-    Возвращает кортеж из словаря опций и пути к временному cookie-файлу,
-    если он был создан (иначе ``None``).
-    """
-    
-    # Базовые настройки
-    temp_cookie = None
+    headers = {"User-Agent": "Mozilla/5.0 (RecipeBot)"}
     opts = {
-        "format": "best[height<=720]/best[ext=mp4]/best",
+        "format": "best[height<=720]/best",
         "quiet": True,
         "no_warnings": True,
-        "extractaudio": False,
-        "audioformat": "mp3",
-        "outtmpl": "%(id)s.%(ext)s",
-        "writesubtitles": False,
-        "writeautomaticsub": False,
-        "no_check_certificate": True,
-        "prefer_insecure": True,
-        # Добавляем User-Agent для обхода блокировок
-        "http_headers": {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-us,en;q=0.5",
-            "Accept-Encoding": "gzip,deflate",
-            "Accept-Charset": "ISO-8859-1,utf-8;q=0.7,*;q=0.7",
-            "Keep-Alive": "115",
-            "Connection": "keep-alive",
-        },
-        # Дополнительные настройки для обхода ограничений
-        "socket_timeout": 30,
-        "retries": 3,
-        "fragment_retries": 3,
-        "retry_sleep_functions": {
-            "http": lambda n: min(4**n, 60),
-            "fragment": lambda n: min(4**n, 60),
-        }
+        "http_headers": headers,
     }
-    
-    # Специфичные настройки для разных платформ
+    temp_cookie = None
     if "instagram.com" in url:
-        opts.update({
-            "format": "best[height<=720]/best",
-            "extractor_args": {
-                "instagram": {
-                    "api_version": "v1",
-                }
-            }
-        })
-        # Используем cookies из переменной окружения или файла
         if IG_COOKIES_CONTENT:
-            temp_cookies = create_temp_cookies_file(IG_COOKIES_CONTENT)
-            if temp_cookies:
-                opts["cookiefile"] = temp_cookies
-                temp_cookie = temp_cookies
-        elif IG_COOKIES_FILE and Path(IG_COOKIES_FILE).exists():
+            temp_cookie = create_temp_cookies_file(IG_COOKIES_CONTENT)
+        elif Path(IG_COOKIES_FILE).exists():
             opts["cookiefile"] = IG_COOKIES_FILE
-            
-    elif "tiktok.com" in url or "vm.tiktok.com" in url or "vt.tiktok.com" in url:
-        opts.update({
-            "format": "best[height<=720]/best",
-            "extractor_args": {
-                "tiktok": {
-                    "api_hostname": "api.tiktokv.com",
-                }
-            }
-        })
-        # Используем cookies из переменной окружения или файла
+    elif "tiktok.com" in url:
         if TT_COOKIES_CONTENT:
-            temp_cookies = create_temp_cookies_file(TT_COOKIES_CONTENT)
-            if temp_cookies:
-                opts["cookiefile"] = temp_cookies
-                temp_cookie = temp_cookies
-        elif TT_COOKIES_FILE and Path(TT_COOKIES_FILE).exists():
+            temp_cookie = create_temp_cookies_file(TT_COOKIES_CONTENT)
+        elif Path(TT_COOKIES_FILE).exists():
             opts["cookiefile"] = TT_COOKIES_FILE
-            
     elif "youtube.com" in url or "youtu.be" in url:
-        # Проверяем, что это Shorts
-        parsed = urlparse(url)
-        if "youtu.be" in parsed.netloc or "/shorts" in parsed.path:
-            opts.update({
-                "format": "best[height<=720]/best[ext=mp4]/best",
-            })
-            # Используем cookies из переменной окружения или файла
-            if YT_COOKIES_CONTENT:
-                temp_cookies = create_temp_cookies_file(YT_COOKIES_CONTENT)
-                if temp_cookies:
-                    opts["cookiefile"] = temp_cookies
-                    temp_cookie = temp_cookies
-            elif YT_COOKIES_FILE and Path(YT_COOKIES_FILE).exists():
-                opts["cookiefile"] = YT_COOKIES_FILE
-        elif "youtube.com" in parsed.netloc:
-            opts.update({
-                "format": "best[height<=720]/best[ext=mp4]/best",
-            })
-            # Используем cookies из переменной окружения или файла
-            if YT_COOKIES_CONTENT:
-                temp_cookies = create_temp_cookies_file(YT_COOKIES_CONTENT)
-                if temp_cookies:
-                    opts["cookiefile"] = temp_cookies
-                    temp_cookie = temp_cookies
-            elif YT_COOKIES_FILE and Path(YT_COOKIES_FILE).exists():
-                opts["cookiefile"] = YT_COOKIES_FILE
-    
+        if YT_COOKIES_CONTENT:
+            temp_cookie = create_temp_cookies_file(YT_COOKIES_CONTENT)
+        elif Path(YT_COOKIES_FILE).exists():
+            opts["cookiefile"] = YT_COOKIES_FILE
+    if temp_cookie:
+        opts["cookiefile"] = temp_cookie
     return opts, temp_cookie
 
-async def download_video(url: str) -> Tuple[Optional[Path], Optional[dict]]:
-    """Скачать видео асинхронно"""
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, _sync_download, url)
 
 def _sync_download(url: str) -> Tuple[Optional[Path], Optional[dict]]:
-    """Синхронная функция для скачивания видео"""
-    import shutil
     temp_dir = Path(tempfile.mkdtemp())
-
     temp_cookie = None
-    video_path: Optional[Path] = None
-    downloaded = False
+    path: Optional[Path] = None
+    info: Optional[dict] = None
     try:
         opts, temp_cookie = get_ydl_opts(url)
         opts["outtmpl"] = str(temp_dir / "%(id)s.%(ext)s")
-        
-        log.info(f"Starting download for URL: {url}")
-        log.info(f"Using yt-dlp options: {opts}")
-        
         with YoutubeDL(opts) as ydl:
-            try:
-                # Сначала попытаемся получить информацию без загрузки
-                log.info("Extracting video info...")
-                info = ydl.extract_info(url, download=False)
-                
-                if not info:
-                    log.error("Failed to extract video info")
-                    return None, None
-                    
-                log.info(f"Video info extracted: title='{info.get('title', 'N/A')}', duration={info.get('duration', 'N/A')}")
-                
-                # Теперь загружаем
-                log.info("Starting video download...")
-                info = ydl.extract_info(url, download=True)
-                
-                if info:
-                    # Найти скачанный файл
-                    video_path = Path(ydl.prepare_filename(info))
-                    log.info(f"Expected file path: {video_path}")
-                    
-                    if video_path.exists():
-                        log.info(f"Video downloaded successfully: {video_path} (size: {video_path.stat().st_size} bytes)")
-                        downloaded = True
-                        return video_path, info
-                    else:
-                        # Попробовать найти файл в temp_dir
-                        log.warning("Expected file not found, searching in temp directory...")
-                        video_files = list(temp_dir.glob("*"))
-                        log.info(f"Files in temp directory: {video_files}")
-                        
-                        for file in temp_dir.glob("*"):
-                            if file.is_file() and file.suffix.lower() in ['.mp4', '.mkv', '.webm', '.mov', '.avi', '.flv']:
-                                log.info(f"Found video file: {file} (size: {file.stat().st_size} bytes)")
-                                video_path = file
-                                downloaded = True
-                                return file, info
-                        
-                        log.error("No video files found in temp directory")
-                        
-                return None, None
-                
-            except DownloadError as e:
-                error_msg = str(e).lower()
-                log.error(f"yt-dlp Download error: {e}")
-
-                # Обработка специфичных ошибок
-                if "private" in error_msg or "login" in error_msg:
-                    log.error("Video is private or requires authentication")
-                elif "not available" in error_msg or "removed" in error_msg:
-                    log.error("Video is not available or has been removed")
-                elif "geo" in error_msg or "country" in error_msg:
-                    log.error("Video is geo-blocked")
-                elif "copyright" in error_msg:
-                    log.error("Video is blocked due to copyright")
-                else:
-                    log.error(f"Unknown download error: {error_msg}")
-
-                return None, None
-
-            except Exception as e:
-                log.error(f"Unexpected error during yt-dlp extraction: {e}")
-                return None, None
-
-                
-    except Exception as e:
-        log.error(f"Unexpected error during download setup: {e}")
+            info = ydl.extract_info(url, download=True)
+            path = Path(ydl.prepare_filename(info))
+            if not path.exists():
+                for f in temp_dir.iterdir():
+                    if f.is_file():
+                        path = f
+                        break
+        return path, info
+    except DownloadError as e:
+        log.error(f"Download error: {e}")
         return None, None
     finally:
         if temp_cookie:
             Path(temp_cookie).unlink(missing_ok=True)
-        if not downloaded:
+        if path is None or not path.exists():
             shutil.rmtree(temp_dir, ignore_errors=True)
 
 
-async def extract_recipe_from_video(video_info: dict) -> str:
-    """Извлечь рецепт из информации о видео используя OpenAI"""
-    try:
-        # Используем title и description для анализа
-        title = video_info.get('title', '')
-        description = video_info.get('description', '')
-        
-        # Если нет полезной информации, возвращаем базовое сообщение
-        if not title and not description:
-            return "🤖 Не удалось извлечь рецепт из видео. Попробуйте другое видео с более подробным описанием."
-        
-        prompt = f"""
-        Проанализируй следующую информацию о видео и извлеки рецепт, если он есть:
+async def download_video(url: str) -> Tuple[Optional[Path], Optional[dict]]:
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _sync_download, url)
 
-        Заголовок: {title}
-        Описание: {description}
 
-        Если в видео есть рецепт, выведи его в следующем формате:
-        📝 **Рецепт: [название блюда]**
-        
-        🥘 **Ингредиенты:**
-        • [список ингредиентов]
-        
-        👨‍🍳 **Приготовление:**
-        1. [пошаговые инструкции]
+# ---------------------------------------------------------------------------
+# OpenAI helper
+# ---------------------------------------------------------------------------
 
-        💡 **Дополнительно:**
-        Если есть дополнительная информация или описание, добавь её сюда.
-
-        Если рецепта нет, просто напиши "В этом видео нет рецепта." и при возможности добавь дополнительную информацию из описания.
-        """
-        
-        client = openai.OpenAI(api_key=OPENAI_API_KEY)
-        response = await asyncio.get_event_loop().run_in_executor(
-            None,
-            lambda: client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {"role": "system", "content": "Ты помощник, который извлекает рецепты из описаний видео. Отвечай на русском языке."},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=1000,
-                temperature=0.7
-            )
-        )
-        
-        recipe = response.choices[0].message.content.strip()
-        return recipe if recipe else "🤖 Не удалось извлечь рецепт из видео."
-        
-    except Exception as e:
-        log.error(f"Error extracting recipe: {e}")
-        return "🤖 Ошибка при извлечении рецепта. Попробуйте позже."
-
-def is_supported_url(url: str) -> bool:
-    """Проверить, поддерживается ли URL"""
-    supported_patterns = [
-        # Instagram
-        'instagram.com/reel', 'instagram.com/p/', 'instagram.com/tv/',
-        # TikTok
-        'tiktok.com/@', 'tiktok.com/t/', 'vm.tiktok.com', 'vt.tiktok.com',
-        # YouTube
-        'youtube.com/shorts/', 'youtu.be/', 'youtube.com/watch?v=',
-    ]
-    
-    try:
-        parsed = urlparse(url.lower())
-        domain = parsed.netloc.lower()
-        path = parsed.path.lower()
-        full_url = f"{domain}{path}"
-        
-        # Проверяем основные домены
-        if any(domain in ['instagram.com', 'www.instagram.com'] for domain in [domain]):
-            return '/reel' in path or '/p/' in path or '/tv/' in path
-        
-        if any(domain in ['tiktok.com', 'www.tiktok.com', 'vm.tiktok.com', 'vt.tiktok.com'] for domain in [domain]):
-            return True
-            
-        if any(domain in ['youtube.com', 'www.youtube.com', 'youtu.be', 'www.youtu.be'] for domain in [domain]):
-            return '/shorts/' in path or 'youtu.be' in domain or 'v=' in parsed.query
-        
-        # Дополнительная проверка по паттернам
-        return any(pattern in full_url for pattern in supported_patterns)
-        
-    except (ValueError, TypeError, AttributeError) as e:
-        log.warning(f"Invalid URL format: {url}, error: {e}")
-        return False
-
-# Welcome текст
-WELCOME = textwrap.dedent(
-    fr"""
-    🔥 **Recipe Bot** — извлекаю рецепт из короткого видео\!
-
-    Бесплатно доступно **{FREE_LIMIT}** роликов\.
-    Тарифы \(скоро\):
-
-    - 10 роликов — 49 ₽
-    - 200 роликов \+ 30 дн\. — 199 ₽
-
-    Пришлите ссылку на видео с рецептом, а я скачаю его и извлеку рецепт\!
-    """
-).strip()
-
-# Handlers
-async def cmd_start(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обработчик команды /start"""
-    await update.message.reply_text(
-        WELCOME,
-        parse_mode=constants.ParseMode.MARKDOWN_V2
+async def extract_recipe_from_video(info: dict) -> str:
+    prompt = (
+        "Извлеки подробный кулинарный рецепт из описания видео. "
+        "Верни заголовок, ингредиенты и шаги приготовления."
     )
+    text = (info.get("title", "") or "") + "\n" + (info.get("description", "") or "")
+    client = openai.OpenAI(api_key=OPENAI_API_KEY)
+    try:
+        response = await client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "system", "content": prompt}, {"role": "user", "content": text}],
+            max_tokens=700,
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as exc:
+        log.error(f"OpenAI error: {exc}")
+        return ""
+
+
+# ---------------------------------------------------------------------------
+# Bot messages
+# ---------------------------------------------------------------------------
+
+WELCOME = (
+    f"Привет\\! Отправь ссылку на короткое видео, и я пришлю рецепт\\. "
+    f"Бесплатно доступно {FREE_LIMIT} роликов\."
+)
+
+
+async def cmd_start(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text(WELCOME, parse_mode=constants.ParseMode.MARKDOWN_V2)
+
 
 async def cmd_status(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
-    """Показать статус использования"""
     uid = update.effective_user.id
     used = get_quota_usage(uid)
-    
     if uid == OWNER_ID:
-        status_text = "👑 Вы владелец бота - неограниченное использование"
+        text = "👑 Вы владелец бота \- лимитов нет"
     else:
-        remaining = max(0, FREE_LIMIT - used)
-        status_text = f"📊 Использовано: {used}/{FREE_LIMIT}\n🆓 Осталось: {remaining}"
-    
-    await update.message.reply_text(status_text, parse_mode=None)
+        text = f"Использовано: {used}/{FREE_LIMIT}"
+    await update.message.reply_text(text)
+
 
 async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обработчик URL-ов"""
     url = update.message.text.strip()
     uid = update.effective_user.id
 
-    await update.message.reply_text("🏃 Скачиваю...", parse_mode=None)
-
-    # Проверка поддерживаемых URL
     if not is_supported_url(url):
         await update.message.reply_text(
-            "❌ Неподдерживаемый формат ссылки!\n\n"
-            "✅ Поддерживаются:\n"
-            "📱 Instagram: /reel/, /p/, /tv/\n"
-            "🎵 TikTok: @username/video/, vm.tiktok.com, vt.tiktok.com\n"
-            "📺 YouTube: /shorts/, обычные видео\n\n"
-            "Примеры правильных ссылок:\n"
-            "• instagram.com/reel/CXXxXxX...\n"
-            "• tiktok.com/@username/video/123...\n"
-            "• youtube.com/shorts/abc123...",
-            parse_mode=None
+            "Неподдерживаемая ссылка\. Пришлите Instagram Reels, TikTok или YouTube Shorts",
+            parse_mode=constants.ParseMode.MARKDOWN_V2,
         )
         return
 
-    # Проверка лимита
-    if uid != OWNER_ID:
-        current_usage = get_quota_usage(uid)
-        if current_usage >= FREE_LIMIT:
-            await update.message.reply_text(
-                "ℹ️ Лимит бесплатных роликов исчерпан.",
-                parse_mode=None
-            )
-            return
+    if uid != OWNER_ID and get_quota_usage(uid) >= FREE_LIMIT:
+        await update.message.reply_text("Бесплатный лимит исчерпан")
+        return
 
-    # Показать "печатает..."
-    await update.message.chat.send_action(constants.ChatAction.TYPING)
+    await update.message.chat.send_action(constants.ChatAction.UPLOAD_VIDEO)
+    video_path, info = await download_video(url)
+    if not video_path or not info or not video_path.exists():
+        await update.message.reply_text("Не удалось скачать видео")
+        return
 
-    # --- fallback_md должен быть определён всегда ---
-    fallback_blocks = {
-        "title": "Не удалось извлечь рецепт",
-        "ingredients": [],
-        "steps": [],
-        "extra": "🤖 Не удалось извлечь рецепт из видео. Попробуйте самостоятельно посмотреть описание ролика или текст под видео."
-    }
-    fallback_md = format_recipe_markdown(
-        fallback_blocks,
-        original_url=url,
-        duration=""
+    with open(video_path, "rb") as f:
+        await update.message.reply_video(video=f)
+
+    recipe_text = await extract_recipe_from_video(info)
+    blocks = parse_recipe_blocks(recipe_text)
+    if not (blocks.get("title") or blocks.get("ingredients") or blocks.get("steps")):
+        blocks = {
+            "title": "Не удалось извлечь рецепт",
+            "ingredients": [],
+            "steps": [],
+            "extra": "Попробуйте посмотреть описание ролика самостоятельно",
+        }
+    md = format_recipe_markdown(
+        blocks,
+        original_url=info.get("webpage_url", url),
+        duration=str(int(info.get("duration", 0))) + " сек." if info.get("duration") else "",
     )
-    video_info = None
-    video_path = None
-    try:
-        # Скачиваем видео
-        video_path, video_info = await download_video(url)
+    await update.message.reply_text(md, parse_mode=constants.ParseMode.MARKDOWN_V2, disable_web_page_preview=True)
 
-        # Если video_info уже есть — обновляем fallback_md с его данными
-        if video_info:
-            fallback_blocks["title"] = video_info.get("title", "Не удалось извлечь рецепт").strip()
-            fallback_md = format_recipe_markdown(
-                fallback_blocks,
-                original_url=video_info.get("webpage_url", url),
-                duration=str(int(video_info.get("duration", 0))) + " сек." if "duration" in video_info else ""
-            )
+    if uid != OWNER_ID:
+        increment_quota(uid)
 
-        # Явный лог, если video_path или video_info отсутствуют
-        if not video_path or not video_path.exists():
-            log.error(f"Download failed or file does not exist for url: {url}")
-            
-            # Определяем тип ошибки на основе платформы
-            if "instagram.com" in url:
-                error_msg = (
-                    "❌ Не удалось скачать Instagram Reels. Возможные причины:\n"
-                    "• Видео приватное или требует входа в аккаунт "
-                    "(добавьте cookies через IG_COOKIES_CONTENT)\n"
-                    "• Видео было удалено\n"
-                    "• Временные проблемы с Instagram API"
-                )
-            elif "tiktok.com" in url:
-                error_msg = "❌ Не удалось скачать TikTok видео. Возможные причины:\n• Видео приватное\n• Видео недоступно в вашем регионе\n• Видео было удалено автором"
-            elif "youtube.com" in url or "youtu.be" in url:
-                error_msg = "❌ Не удалось скачать YouTube видео. Возможные причины:\n• Видео приватное или ограничено по возрасту\n• Видео недоступно в вашем регионе\n• Проблемы с авторскими правами"
-            else:
-                error_msg = "❌ Не удалось скачать видео. Попробуйте другую ссылку."
-                
-            await update.message.reply_text(error_msg, parse_mode=None)
-            
-            # Отправляем fallback_md (текстовый блок)
-            await update.message.reply_text(
-                fallback_md,
-                parse_mode=constants.ParseMode.MARKDOWN_V2,
-                disable_web_page_preview=True,
-            )
-            if video_path:
-                temp_dir = video_path.parent
-                video_path.unlink(missing_ok=True)
-                shutil.rmtree(temp_dir, ignore_errors=True)
-            return
-            
-        if not video_info:
-            log.error(f"Download returned no video_info for url: {url}")
-            await update.message.reply_text(
-                "❌ Не удалось получить информацию о видео. Попробуйте другую ссылку.",
-                parse_mode=None
-            )
-            await update.message.reply_text(
-                fallback_md,
-                parse_mode=constants.ParseMode.MARKDOWN_V2,
-                disable_web_page_preview=True,
-            )
-            if video_path:
-                temp_dir = video_path.parent
-                video_path.unlink(missing_ok=True)
-                shutil.rmtree(temp_dir, ignore_errors=True)
-            return
+    tmpdir = video_path.parent
+    video_path.unlink(missing_ok=True)
+    shutil.rmtree(tmpdir, ignore_errors=True)
 
-        # Проверяем размер файла (Telegram лимит 50MB)
-        file_size = video_path.stat().st_size
-        if file_size > 50 * 1024 * 1024:  # 50MB
-            await update.message.reply_text(
-                "❌ Видео слишком большое для отправки (максимум 50MB).",
-                parse_mode=None
-            )
-            temp_dir = video_path.parent
-            video_path.unlink(missing_ok=True)
-            shutil.rmtree(temp_dir, ignore_errors=True)
-            await update.message.reply_text(
-                fallback_md,
-                parse_mode=constants.ParseMode.MARKDOWN_V2,
-                disable_web_page_preview=True,
-            )
-            return
 
-        # Отправляем видео СРАЗУ (caption пустой, текст отдельным сообщением)
-        with open(video_path, 'rb') as video_file:
-            await update.message.reply_video(
-                video=video_file,
-                caption="",  # Caption пустой или максимум короткое название
-                parse_mode=None
-            )
+# ---------------------------------------------------------------------------
+# Web server helpers
+# ---------------------------------------------------------------------------
 
-        # fallback_md уже актуален (с web_url и title)
-        try:
-            recipe = await extract_recipe_from_video(video_info)
-            log.info(f"Extracted recipe raw:\n{recipe}")
-            blocks = parse_recipe_blocks(recipe)
-            # Если текст пустой, или только с ошибкой — fallback шаблон
-            invalid = (
-                not recipe or recipe.strip().startswith("🤖")
-                or not (blocks["title"] or blocks["ingredients"] or blocks["steps"])
-            )
-            if invalid:
-                md = fallback_md
-            else:
-                md = format_recipe_markdown(
-                    blocks,
-                    original_url=video_info.get("webpage_url", url),
-                    duration=str(int(video_info.get("duration", 0))) + " сек." if "duration" in video_info else ""
-                )
-        except Exception as err:
-            log.error(f"Ошибка извлечения рецепта: {err}")
-            md = fallback_md  # fallback по шаблону!
+async def health_check(_: web.Request) -> web.Response:
+    return web.Response(text="OK")
 
-        await update.message.reply_text(
-            md,
-            parse_mode=constants.ParseMode.MARKDOWN_V2,
-            disable_web_page_preview=True,
-        )
 
-        # Увеличиваем счетчик использования
-        if uid != OWNER_ID:
-            increment_quota(uid)
+def create_web_app(app: Application) -> web.Application:
+    web_app = web.Application()
+    web_app.router.add_get("/", health_check)
 
-        # Удаляем временный файл и каталог
-        temp_dir = video_path.parent
-        video_path.unlink(missing_ok=True)
-        shutil.rmtree(temp_dir, ignore_errors=True)
-
-    except Exception as e:
-        log.error(f"Error processing URL {url}: {e}")
-        
-        # Определяем тип ошибки и даем соответствующее сообщение
-        error_type = type(e).__name__
-        if "timeout" in str(e).lower():
-            error_msg = "⏱️ Превышено время ожидания. Попробуйте позже или другую ссылку."
-        elif "network" in str(e).lower() or "connection" in str(e).lower():
-            error_msg = "🌐 Проблемы с сетью. Проверьте соединение и повторите попытку."
-        elif "permission" in str(e).lower() or "access" in str(e).lower():
-            error_msg = "🔒 Ошибка доступа к видео. Возможно, оно приватное."
-        else:
-            error_msg = f"❌ Произошла ошибка при обработке видео.\nТип ошибки: {error_type}\n\nПопробуйте другую ссылку или повторите попытку позже."
-        
-        await update.message.reply_text(error_msg, parse_mode=None)
-        
-        # fallback_md уже определён (на случай если видео_info нет — минимальный шаблон)
-        await update.message.reply_text(
-            fallback_md,
-            parse_mode=constants.ParseMode.MARKDOWN_V2,
-            disable_web_page_preview=True,
-        )
-
-        # Cleanup temporary files if they exist
-        if video_path:
-            temp_dir = video_path.parent
-            video_path.unlink(missing_ok=True)
-            shutil.rmtree(temp_dir, ignore_errors=True)
-
-# Health check для Render
-async def health_check(request: web.Request) -> web.Response:
-    """Health check endpoint"""
-    return web.Response(text="OK", status=200)
-
-def create_web_app(application: Application) -> web.Application:
-    """Создать веб-приложение для health check и webhook"""
-    app = web.Application()
-    app.router.add_get("/", health_check)
-    app.router.add_get("/health", health_check)
-
-    async def telegram_webhook(request: web.Request) -> web.Response:
+    async def webhook_handler(request: web.Request) -> web.Response:
         data = await request.json()
-        await application.process_update(Update.de_json(data, application.bot))
+        await app.process_update(Update.de_json(data, app.bot))
         return web.Response(text="OK")
 
-    app.router.add_post("/", telegram_webhook)
-    return app
+    web_app.router.add_post("/", webhook_handler)
+    return web_app
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 
 async def main() -> None:
-    """Основная функция"""
-    if not validate_env():
-        sys.exit(1)
+    if not TOKEN or not OPENAI_API_KEY:
+        log.error("Missing TELEGRAM_TOKEN or OPENAI_API_KEY")
+        return
+
     init_db()
-    
-    # Создаем Telegram приложение
-    application = Application.builder().token(TOKEN).build()
-    
-    # Добавляем обработчики
-    application.add_handler(CommandHandler("start", cmd_start))
-    application.add_handler(CommandHandler("status", cmd_status))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_url))
-    
-    # Создаем веб-сервер для health check + webhook
-    web_app = create_web_app(application)
+
+    app = Application.builder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("status", cmd_status))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_url))
+
+    web_app = create_web_app(app)
     runner = web.AppRunner(web_app)
     await runner.setup()
-    
-    port = int(os.environ.get("PORT", 8080))
-    site = web.TCPSite(runner, host="0.0.0.0", port=port)
+    port = int(os.getenv("PORT", "8080"))
+    site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
-    
-    log.info(f"Health check server started on port {port}")
-    
-    # Запускаем Telegram бота
-    await application.initialize()
-    WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
-    if WEBHOOK_URL:
-        await application.bot.set_webhook(url=WEBHOOK_URL)
-        log.info(f"Webhook set to: {WEBHOOK_URL}")
-        await application.start()  # Запускать только если webhook!
+
+    await app.initialize()
+    webhook_url = os.getenv("WEBHOOK_URL")
+    if webhook_url:
+        await app.bot.set_webhook(url=webhook_url)
+        await app.start()
     else:
-        # Для локальной отладки можно fallback на polling
-        log.warning("WEBHOOK_URL не задан. Запуск через polling (локально).")
-        await application.start()
-        await application.updater.start_polling(drop_pending_updates=True)
-    
-    log.info("Recipe bot started successfully!")
-    
+        await app.start()
+        await app.updater.start_polling(drop_pending_updates=True)
+
     try:
-        # Держим приложение запущенным
         await asyncio.Event().wait()
-    except KeyboardInterrupt:
-        log.info("Shutting down...")
     finally:
-        # Корректное завершение
-        await application.stop()
-        await application.shutdown()
+        await app.stop()
+        await app.shutdown()
         await runner.cleanup()
+
 
 if __name__ == "__main__":
     asyncio.run(main())
