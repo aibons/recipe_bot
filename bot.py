@@ -30,6 +30,8 @@ from telegram.ext import (
     filters,
 )
 
+BASE_DIR = Path(__file__).resolve().parent
+
 
 # ---------------------------------------------------------------------------
 # Utility functions
@@ -235,9 +237,9 @@ IG_COOKIES_CONTENT = os.getenv("IG_COOKIES_CONTENT", "")
 TT_COOKIES_CONTENT = os.getenv("TT_COOKIES_CONTENT", "")
 YT_COOKIES_CONTENT = os.getenv("YT_COOKIES_CONTENT", "")
 
-IG_COOKIES_FILE = os.getenv("IG_COOKIES_FILE", "cookies_instagram.txt")
-TT_COOKIES_FILE = os.getenv("TT_COOKIES_FILE", "cookies_tiktok.txt")
-YT_COOKIES_FILE = os.getenv("YT_COOKIES_FILE", "cookies_youtube.txt")
+IG_COOKIES_FILE = os.getenv("IG_COOKIES_FILE", str(BASE_DIR / "cookies_instagram.txt"))
+TT_COOKIES_FILE = os.getenv("TT_COOKIES_FILE", str(BASE_DIR / "cookies_tiktok.txt"))
+YT_COOKIES_FILE = os.getenv("YT_COOKIES_FILE", str(BASE_DIR / "cookies_youtube.txt"))
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
