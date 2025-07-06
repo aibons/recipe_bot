@@ -4,8 +4,8 @@ __pycache__/
 
 .DS_Store
 cookies_*.txt
-cookies_instagram.txt
-cookies_tiktok.txt
-cookies_youtube.txt
+!cookies_instagram.txt
+!cookies_tiktok.txt
+!cookies_youtube.txt
 bot.db
 .pytest_cache/
