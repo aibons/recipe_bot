@@ -9,6 +9,7 @@ import logging
 import os
 import shutil
 import sqlite3
+import subprocess
 import tempfile
 from pathlib import Path
 from typing import Optional, Tuple
@@ -44,32 +45,38 @@ def parse_recipe_blocks(text: str) -> dict:
     """Parse a plain text recipe into blocks used by the formatter."""
     blocks = {"title": "", "ingredients": [], "steps": [], "extra": ""}
     current = None
-    for line in text.splitlines():
-        line = line.strip()
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
         if not line:
             continue
         l = line.lower()
-        if l.startswith("рецепт"):
+        if l.startswith("рецепт") or l.startswith("название"):
             parts = line.split(":", 1)
-            blocks["title"] = parts[1].strip() if len(parts) > 1 else ""
+            if len(parts) > 1:
+                blocks["title"] = parts[1].strip()
+            else:
+                blocks["title"] = line.partition(" ")[2].strip()
             continue
         if l.startswith("ингредиенты"):
             current = "ingredients"
             continue
-        if l.startswith("приготов") or l.startswith("шаги"):
+        if l.startswith("приготов") or l.startswith("шаг"):
             current = "steps"
             continue
-        if l.startswith("дополнительно"):
+        if l.startswith("дополнительно") or l.startswith("совет") or l.startswith("примеч"):
             current = "extra"
             continue
 
         if current == "ingredients":
             item = line.lstrip("-• ").strip()
-            if item.endswith('.'):
+            if item.endswith("."):
                 item = item[:-1]
             blocks["ingredients"].append(item)
         elif current == "steps":
-            blocks["steps"].append(line.lstrip("0123456789. "))
+            step = line.lstrip("0123456789.- ").strip()
+            if step.endswith(".") and len(step.split()) > 1:
+                step = step[:-1]
+            blocks["steps"].append(step)
         elif current == "extra":
             if blocks["extra"]:
                 blocks["extra"] += "\n"
@@ -78,23 +85,71 @@ def parse_recipe_blocks(text: str) -> dict:
 
 
 def format_recipe_markdown(recipe: dict, original_url: str = "", duration: str = "") -> str:
-    """Return recipe formatted with Telegram Markdown V2."""
-    parts = []
+    """Return recipe formatted with Telegram Markdown V2.
+
+    Example output::
+
+        🍽️ Цезарь с жареной курицей
+
+        🛒 Ингредиенты
+        🔸 Для курицы:
+        • Куриная грудка — 2 шт.
+        • Мука — ½ стакана
+        • Яйцо — 5 шт.
+        • Панировочные сухари — 1 стакан
+        • Масло для жарки — по вкусу
+
+        🔸 Для салата:
+        • Листья салата — 8 шт.
+        • Перец халапеньо — 1 шт.
+        • Сельдерей — 1 стебель
+
+        🔸 Для заправки:
+        • Каперсы — 2 ст. л.
+        • Дижонская горчица — 2 ст. л.
+        • Чеснок — 1 зубчик
+        • Яичный желток — 1 шт.
+        • Анчоусы — 3 филе
+        • Лимонный сок — 1 шт.
+        • Масло виноградных косточек — 1½ стакана
+
+        ⸻
+
+        👩‍🍳 Шаги приготовления
+        1. Баттерфляйд и разбей куриные грудки.
+        2. Обваляй каждую грудку в муке, яйце и сухарях.
+        3. Жарь до золотистой корочки с двух сторон.
+        4. Подготовь салат и заправку, смешай ингредиенты.
+        5. Сервируй салат с курицей, посыпь пармезаном и укрась.
+
+        ⸻
+
+        💡 Дополнительно
+        Можно добавить зелёный лук и оливковое масло для вкуса.
+
+        ⸻
+
+        🔗 Оригинал (59 сек.)
+    """
+
+    parts: list[str] = []
     sep = "⸻"
 
-    title = recipe.get("title")
+    title = (recipe.get("title") or "").strip()
     if title:
-        parts.append(f"🍽️ *{escape_markdown_v2(title)}*")
+        parts.append(f"🍽️ {escape_markdown_v2(title.upper())}")
 
     ingredients = recipe.get("ingredients") or []
     if ingredients:
-        if parts:
-            parts.append(sep)
+        parts.append("")
         parts.append("🛒 *Ингредиенты*")
         for item in ingredients:
             item = item.strip()
+            if not item:
+                continue
             if item.endswith(":"):
-                parts.append(escape_markdown_v2(item))
+                head = item[:-1].strip()
+                parts.append(f"🔸 *{escape_markdown_v2(head)}:*")
                 continue
             if "—" in item:
                 name, qty = item.split("—", 1)
@@ -105,29 +160,38 @@ def format_recipe_markdown(recipe: dict, original_url: str = "", duration: str =
             name = name.strip() or "?"
             qty = qty.strip() or "по вкусу"
             parts.append(f"• {escape_markdown_v2(name)} — {escape_markdown_v2(qty)}")
+        parts.append("")
+        parts.append(sep)
 
     steps = recipe.get("steps") or []
     if steps:
-        if parts:
-            parts.append(sep)
+        parts.append("")
         parts.append("👩‍🍳 *Шаги приготовления*")
         for i, step in enumerate(steps, 1):
             parts.append(f"{i}. {escape_markdown_v2(step.strip())}")
+        parts.append("")
+        parts.append(sep)
 
-    extra = recipe.get("extra")
+    extra = (recipe.get("extra") or "").strip()
     if extra:
-        if parts:
-            parts.append(sep)
+        parts.append("")
         parts.append("💡 *Дополнительно*")
         parts.append(escape_markdown_v2(extra))
+        parts.append("")
+        parts.append(sep)
 
     if original_url:
-        if parts:
-            parts.append(sep)
+        parts.append("")
         line = f"🔗 [Оригинал]({escape_markdown_v2(original_url)})"
         if duration:
             line += f" {escape_markdown_v2(f'({duration})')}"
         parts.append(line)
+
+    # remove potential leading/trailing empty lines
+    while parts and not parts[0]:
+        parts.pop(0)
+    while parts and not parts[-1]:
+        parts.pop()
 
     return "\n".join(parts)
 
@@ -280,6 +344,42 @@ async def download_video(url: str) -> Tuple[Optional[Path], Optional[dict], Opti
     return await loop.run_in_executor(None, _sync_download, url)
 
 
+def compress_video_to_720p(path: Path) -> bool:
+    """Compress and scale video to maximum 720p using ffmpeg.
+
+    Returns True on success, False otherwise."""
+    out_path = path.with_name(path.stem + "_720p" + path.suffix)
+    scale_expr = "scale='if(gt(iw,ih),min(iw,720),-2)':if(gt(iw,ih),-2,min(ih,720))"
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(path),
+        "-vf",
+        scale_expr,
+        "-c:v",
+        "libx264",
+        "-preset",
+        "fast",
+        "-crf",
+        "28",
+        "-c:a",
+        "copy",
+        "-loglevel",
+        "error",
+        str(out_path),
+    ]
+    try:
+        subprocess.run(cmd, check=True)
+        path.unlink(missing_ok=True)
+        out_path.rename(path)
+        return True
+    except Exception as exc:  # pragma: no cover - ffmpeg not invoked in tests
+        log.error(f"ffmpeg error: {exc}")
+        out_path.unlink(missing_ok=True)
+        return False
+
+
 # ---------------------------------------------------------------------------
 # OpenAI helpers
 # ---------------------------------------------------------------------------
@@ -400,6 +500,11 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(
             "❌ Не удалось скачать видео. Возможные причины: приватное видео, требуется вход в аккаунт, видео было удалено или временные проблемы с платформой."
         )
+        return
+
+    if not compress_video_to_720p(video_path):
+        await update.message.reply_text("Не удалось скачать или обработать видео, попробуйте другое")
+        shutil.rmtree(video_path.parent, ignore_errors=True)
         return
 
     with open(video_path, "rb") as f:
