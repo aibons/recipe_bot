@@ -279,16 +279,32 @@ async def download_video(url: str) -> Tuple[Optional[Path], Optional[dict]]:
 
 
 # ---------------------------------------------------------------------------
-# OpenAI helper
+# OpenAI helpers
 # ---------------------------------------------------------------------------
 
-async def extract_recipe_from_video(info: dict) -> str:
+async def transcribe_video(path: Path) -> str:
+    """Return speech transcription for given video file."""
+    client = openai.AsyncOpenAI(api_key=OPENAI_API_KEY)
+    try:
+        with open(path, "rb") as f:
+            resp = await client.audio.transcriptions.create(
+                model="whisper-1",
+                file=f,
+                response_format="text",
+            )
+        return resp.strip()
+    except Exception as exc:
+        log.error(f"Transcription error: {exc}")
+        return ""
+
+
+async def extract_recipe_from_video_text(text: str) -> str:
+    """Extract a recipe from provided text using OpenAI."""
     prompt = (
         "Извлеки подробный кулинарный рецепт из описания видео. "
         "Верни заголовок, ингредиенты и шаги приготовления."
     )
-    text = (info.get("title", "") or "") + "\n" + (info.get("description", "") or "")
-    client = openai.OpenAI(api_key=OPENAI_API_KEY)
+    client = openai.AsyncOpenAI(api_key=OPENAI_API_KEY)
     try:
         response = await client.chat.completions.create(
             model="gpt-3.5-turbo",
@@ -357,10 +373,22 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     with open(video_path, "rb") as f:
         await update.message.reply_video(video=f)
 
-    recipe_text = await extract_recipe_from_video(info)
+    title = (info.get("title") or "").strip()
+    desc = (info.get("description") or "").strip()
+    need_transcript = not title and len(desc) < 20
+    transcript = ""
+    if need_transcript:
+        await update.message.reply_text("🤖 Распознаю речь...")
+        transcript = await transcribe_video(video_path)
+
+    text_for_ai = transcript if transcript else f"{title}\n{desc}"
+    recipe_text = await extract_recipe_from_video_text(text_for_ai)
     blocks = parse_recipe_blocks(recipe_text)
     if not (blocks.get("title") or blocks.get("ingredients") or blocks.get("steps")):
-        await update.message.reply_text("Не удалось извлечь рецепт из видео")
+        if need_transcript and not transcript:
+            await update.message.reply_text("❌ Не удалось распознать речь и извлечь рецепт из видео")
+        else:
+            await update.message.reply_text("Не удалось извлечь рецепт из видео")
     else:
         md = format_recipe_markdown(
             blocks,
