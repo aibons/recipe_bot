@@ -21,6 +21,16 @@ Recipe Bot is a Telegram bot that downloads short cooking videos (Instagram Reel
    python bot.py
    ```
 
+### Render build command
+
+When deploying on Render (without Docker), set the build command to:
+
+```bash
+apt-get update && apt-get install -y ffmpeg && pip install -r requirements.txt
+```
+
+If you use Docker, add the `apt-get` line to your Dockerfile before installing Python dependencies.
+
 ## Running tests
 The project uses `pytest` for tests:
 ```bash

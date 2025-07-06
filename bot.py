@@ -2,6 +2,8 @@
 # -*- coding: utf-8 -*-
 """Telegram bot that extracts recipes from short cooking videos."""
 
+# Requires ``ffmpeg`` to be installed and available in ``PATH``.
+
 from __future__ import annotations
 
 import asyncio
