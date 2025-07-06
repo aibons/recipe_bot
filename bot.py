@@ -296,7 +296,7 @@ async def extract_recipe_from_video(info: dict) -> str:
         )
         return response.choices[0].message.content.strip()
     except Exception as exc:
-        log.error(f"OpenAI error: {exc}")
+        log.error(f"OpenAI error: {exc}", exc_info=True)
         return ""
 
 
@@ -344,7 +344,7 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         video_path, info = await download_video(url)
     except Exception as exc:
-        log.error(f"Download exception: {exc}")
+        log.error(f"Download exception: {exc}", exc_info=True)
         video_path, info = None, None
 
     if not video_path or not info or not video_path.exists():
