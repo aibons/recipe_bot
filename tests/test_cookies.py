@@ -101,8 +101,9 @@ def test_sync_download_uses_temp_cookies(monkeypatch, tmp_path, var, url):
     monkeypatch.setattr(bot, "TT_COOKIES_CONTENT", "" if var != "TT_COOKIES_CONTENT" else "cookie")
     monkeypatch.setattr(bot, "YT_COOKIES_CONTENT", "" if var != "YT_COOKIES_CONTENT" else "cookie")
 
-    path, info = bot._sync_download(url)
+    path, info, err = bot._sync_download(url)
 
+    assert err is None
     assert path is not None and info is not None
     assert len(cookie_paths) == 1
 
