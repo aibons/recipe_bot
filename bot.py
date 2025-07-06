@@ -582,6 +582,9 @@ def create_web_app(app: Application) -> web.Application:
 # ---------------------------------------------------------------------------
 
 async def main() -> None:
+    if shutil.which("ffmpeg") is None:
+        log.error("ffmpeg is required but was not found in PATH")
+        return
     if not TOKEN or not OPENAI_API_KEY:
         log.error("Missing TELEGRAM_TOKEN or OPENAI_API_KEY")
         return
