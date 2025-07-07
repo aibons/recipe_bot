@@ -497,6 +497,7 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     ctx.user_data["last_url"] = url
+    log.info(f"Start processing for {uid}: {url}")
     async with lock:
         video_path: Optional[Path] = None
         try:
@@ -557,10 +558,12 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
                     reason = "Требуется вход в аккаунт."
                 else:
                     reason = err
+                log.error(f"Processing error for {uid}: {reason}")
                 await update.message.reply_text(f"❌ Не удалось скачать видео. {reason}")
                 return
 
             if not video_path or not info or not video_path.exists():
+                log.error(f"Processing error for {uid}: download failed")
                 await update.message.reply_text(
                     "❌ Не удалось скачать видео. Возможные причины: приватное видео, требуется вход в аккаунт, видео было удалено или временные проблемы с платформой."
                 )
@@ -568,6 +571,7 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
             ffmpeg_error = compress_video_to_720p(video_path)
             if ffmpeg_error:
+                log.error(f"Processing error for {uid}: {ffmpeg_error}")
                 await update.message.reply_text(
                     f"Не удалось обработать видео: {ffmpeg_error}"
                 )
@@ -605,6 +609,8 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
                     disable_web_page_preview=True,
                 )
 
+            log.info(f"Finished processing for {uid}: {url}")
+
             if uid != OWNER_ID:
                 increment_quota(uid)
 
@@ -614,6 +620,7 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
                 video_path.unlink(missing_ok=True)
                 shutil.rmtree(tmpdir, ignore_errors=True)
             ctx.user_data.pop("last_url", None)
+            log.info(f"State reset for {uid}")
 # ---------------------------------------------------------------------------
 # Web server helpers
 # ---------------------------------------------------------------------------
