@@ -253,6 +253,17 @@ IG_COOKIES_PATH = str(Path(IG_COOKIES_FILE).expanduser().resolve())
 TT_COOKIES_PATH = str(Path(TT_COOKIES_FILE).expanduser().resolve())
 YT_COOKIES_PATH = str(Path(YT_COOKIES_FILE).expanduser().resolve())
 
+
+def is_cookie_file_readable(path: str, name: str) -> bool:
+    """Return True if the cookie file exists and can be read."""
+    try:
+        with open(path, "rb"):
+            pass
+        return True
+    except Exception as exc:
+        log.error(f"{name} cookies not found or invalid: {exc}")
+        return False
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 
@@ -478,6 +489,11 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             log.error(msg)
             await update.message.reply_text(msg)
             return
+        if not IG_COOKIES_CONTENT and not is_cookie_file_readable(IG_COOKIES_PATH, "Instagram"):
+            await update.message.reply_text(
+                "❌ Не удалось скачать видео. Проверьте файл cookies для Instagram."
+            )
+            return
     elif "tiktok.com" in url:
         if not TT_COOKIES_CONTENT and not Path(TT_COOKIES_PATH).exists():
             msg = "❌ Не удалось скачать видео. Не найден файл cookies для платформы TikTok."
@@ -503,6 +519,13 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         emsg = err.lower()
         if "private" in emsg:
             reason = "Видео приватное или требует входа в аккаунт."
+        elif "instagram.com" in url and (
+            "login" in emsg or "sign in" in emsg or "forbidden" in emsg or "403" in emsg or "401" in emsg
+        ):
+            reason = (
+                "Проверьте, пожалуйста, актуальность cookies для Instagram и загрузите новый файл."
+            )
+            log.error(f"Instagram auth error: {err}")
         elif "403" in emsg or "forbidden" in emsg or "login" in emsg or "sign in" in emsg:
             reason = "Требуется вход в аккаунт."
         else:
