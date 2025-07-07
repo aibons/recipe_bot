@@ -358,12 +358,12 @@ async def download_video(url: str) -> Tuple[Optional[Path], Optional[dict], Opti
     return await loop.run_in_executor(None, _sync_download, url)
 
 
-def compress_video_to_720p(path: Path) -> bool:
+def compress_video_to_720p(path: Path) -> Optional[str]:
     """Compress and scale video to maximum 720p using ffmpeg.
 
-    Returns True on success, False otherwise."""
+    Returns ``None`` on success or an error message on failure."""
     out_path = path.with_name(path.stem + "_720p" + path.suffix)
-    scale_expr = "scale='if(gt(iw,ih),min(iw,720),-2)':if(gt(iw,ih),-2,min(ih,720))"
+    scale_expr = "scale='if(gte(iw,ih),720,-2)':'if(gte(ih,iw),720,-2)'"
     cmd = [
         "ffmpeg",
         "-y",
@@ -384,14 +384,18 @@ def compress_video_to_720p(path: Path) -> bool:
         str(out_path),
     ]
     try:
-        subprocess.run(cmd, check=True)
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
         path.unlink(missing_ok=True)
         out_path.rename(path)
-        return True
+        return None
+    except subprocess.CalledProcessError as exc:  # pragma: no cover - ffmpeg not invoked in tests
+        log.error(f"ffmpeg error: {exc.stderr}")
+        out_path.unlink(missing_ok=True)
+        return exc.stderr.strip() if exc.stderr else "ffmpeg execution failed"
     except Exception as exc:  # pragma: no cover - ffmpeg not invoked in tests
         log.error(f"ffmpeg error: {exc}")
         out_path.unlink(missing_ok=True)
-        return False
+        return str(exc)
 
 
 # ---------------------------------------------------------------------------
@@ -516,8 +520,11 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         )
         return
 
-    if not compress_video_to_720p(video_path):
-        await update.message.reply_text("Не удалось скачать или обработать видео, попробуйте другое")
+    ffmpeg_error = compress_video_to_720p(video_path)
+    if ffmpeg_error:
+        await update.message.reply_text(
+            f"Не удалось обработать видео: {ffmpeg_error}"
+        )
         shutil.rmtree(video_path.parent, ignore_errors=True)
         return
 
