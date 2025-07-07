@@ -52,20 +52,28 @@ def escape_markdown_v2(text: str) -> str:
 
 
 def parse_recipe_blocks(text: str) -> dict:
-    """Parse a plain text recipe into blocks used by the formatter."""
+    """Parse a plain text recipe into blocks used by the formatter.
+
+    The parser is tolerant to various formatting styles and preserves
+    indentation so that nested lists can be reconstructed later.
+    """
+
     blocks = {"title": "", "ingredients": [], "steps": [], "extra": ""}
     current = None
+
     for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if not line:
+        # Preserve leading spaces so nested lists remain intact
+        line = raw_line.rstrip("\n")
+        stripped = line.strip()
+        if not stripped:
             continue
-        l = line.lower()
+        l = stripped.lower()
         if l.startswith("рецепт") or l.startswith("название"):
-            parts = line.split(":", 1)
+            parts = stripped.split(":", 1)
             if len(parts) > 1:
                 blocks["title"] = parts[1].strip()
             else:
-                blocks["title"] = line.partition(" ")[2].strip()
+                blocks["title"] = stripped.partition(" ")[2].strip()
             continue
         if l.startswith("ингредиенты"):
             current = "ingredients"
@@ -78,19 +86,24 @@ def parse_recipe_blocks(text: str) -> dict:
             continue
 
         if current == "ingredients":
-            item = line.lstrip("-• ").strip()
-            if item.endswith("."):
-                item = item[:-1]
+            item = stripped.lstrip("-• ").rstrip(".")
+            indent = len(line) - len(line.lstrip())
+            if indent:
+                item = " " * indent + item
             blocks["ingredients"].append(item)
         elif current == "steps":
-            step = line.lstrip("0123456789.- ").strip()
+            step = stripped.lstrip("0123456789.- ")
             if step.endswith(".") and len(step.split()) > 1:
                 step = step[:-1]
+            indent = len(line) - len(line.lstrip())
+            if indent:
+                step = " " * indent + step
             blocks["steps"].append(step)
         elif current == "extra":
             if blocks["extra"]:
                 blocks["extra"] += "\n"
-            blocks["extra"] += line
+            blocks["extra"] += stripped
+
     return blocks
 
 
@@ -147,60 +160,71 @@ def format_recipe_markdown(recipe: dict, original_url: str = "", duration: str =
 
     title = (recipe.get("title") or "").strip()
     if title:
-        parts.append(f"🍽️ {escape_markdown_v2(title.upper())}")
+        parts.append(f"🍽️ {escape_markdown_v2(title)}")
+        parts.append("")
 
     ingredients = recipe.get("ingredients") or []
     if ingredients:
-        parts.append("")
         parts.append("🛒 *Ингредиенты*")
         for item in ingredients:
-            item = item.strip()
-            if not item:
+            raw = item.rstrip()
+            if not raw:
                 continue
-            if item.endswith(":"):
-                head = item[:-1].strip()
+            if raw.endswith(":"):
+                head = raw[:-1].strip()
                 parts.append(f"🔸 *{escape_markdown_v2(head)}:*")
                 continue
-            if "—" in item:
-                name, qty = item.split("—", 1)
-            elif "-" in item:
-                name, qty = item.split("-", 1)
+            indent = len(raw) - len(raw.lstrip())
+            text = raw.lstrip()
+            if text.startswith(("-", "•")):
+                text = text[1:].lstrip()
+            if "—" in text:
+                name, qty = text.split("—", 1)
+            elif "-" in text:
+                name, qty = text.split("-", 1)
             else:
-                name, qty = item, "по вкусу"
+                name, qty = text, "по вкусу"
             name = name.strip() or "?"
             qty = qty.strip() or "по вкусу"
-            parts.append(f"• {escape_markdown_v2(name)} — {escape_markdown_v2(qty)}")
-        parts.append("")
+            parts.append(f"{' ' * indent}• {escape_markdown_v2(name)} — {escape_markdown_v2(qty)}")
         parts.append(sep)
+        parts.append("")
 
     steps = recipe.get("steps") or []
     if steps:
-        parts.append("")
         parts.append("👩‍🍳 *Шаги приготовления*")
-        for i, step in enumerate(steps, 1):
-            parts.append(f"{i}. {escape_markdown_v2(step.strip())}")
-        parts.append("")
+        idx = 1
+        for step in steps:
+            raw = step.rstrip()
+            if not raw:
+                continue
+            indent = len(raw) - len(raw.lstrip())
+            text = raw.lstrip()
+            if text.startswith(("-", "•")) or indent > 0:
+                text = text.lstrip("-• ")
+                parts.append(f"{' ' * indent}• {escape_markdown_v2(text)}")
+                continue
+            text = text.lstrip("0123456789.- ")
+            parts.append(f"{idx}. {escape_markdown_v2(text)}")
+            idx += 1
         parts.append(sep)
+        parts.append("")
 
     extra = (recipe.get("extra") or "").strip()
     if extra:
-        parts.append("")
         parts.append("💡 *Дополнительно*")
-        parts.append(escape_markdown_v2(extra))
-        parts.append("")
+        for line in extra.splitlines():
+            parts.append(escape_markdown_v2(line.strip()))
         parts.append(sep)
+        parts.append("")
 
     if original_url:
-        parts.append("")
         line = f"🔗 [Оригинал]({escape_markdown_v2(original_url)})"
         if duration:
             line += f" {escape_markdown_v2(f'({duration})')}"
         parts.append(line)
 
-    # remove potential leading/trailing empty lines
-    while parts and not parts[0]:
-        parts.pop(0)
-    while parts and not parts[-1]:
+    while parts and parts[-1] == "":
         parts.pop()
 
     return "\n".join(parts)
@@ -240,6 +264,7 @@ TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OWNER_ID = int(os.getenv("OWNER_ID", "0"))
 FREE_LIMIT = int(os.getenv("FREE_LIMIT", "6"))
+LOCK_TIMEOUT = int(os.getenv("LOCK_TIMEOUT", "300"))
 
 IG_COOKIES_CONTENT = os.getenv("IG_COOKIES_CONTENT", "")
 TT_COOKIES_CONTENT = os.getenv("TT_COOKIES_CONTENT", "")
@@ -419,8 +444,8 @@ def compress_video_to_720p(path: Path) -> Optional[str]:
 # OpenAI helpers
 # ---------------------------------------------------------------------------
 
-async def transcribe_video(path: Path) -> str:
-    """Return speech transcription for given video file."""
+async def transcribe_video(path: Path) -> tuple[str, Optional[str]]:
+    """Return speech transcription for given video file and possible error."""
     client = openai.AsyncOpenAI(api_key=OPENAI_API_KEY)
     try:
         with open(path, "rb") as f:
@@ -429,10 +454,10 @@ async def transcribe_video(path: Path) -> str:
                 file=f,
                 response_format="text",
             )
-        return resp.strip()
+        return resp.strip(), None
     except Exception as exc:
         log.error(f"Transcription error: {exc}")
-        return ""
+        return "", str(exc)
 
 
 async def extract_recipe_from_video_text(text: str) -> str:
@@ -484,56 +509,76 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     uid = update.effective_user.id
 
     lock = chat_locks[uid]
+    now = asyncio.get_event_loop().time()
     if lock.locked():
-        last = ctx.user_data.get("last_url")
-        if last == url:
-            await update.message.reply_text(
-                "⏳ Предыдущее видео еще обрабатывается, пожалуйста подождите"
-            )
+        start_time = ctx.user_data.get("processing_started")
+        if start_time and now - start_time > LOCK_TIMEOUT:
+            log.warning(f"Lock timeout for {uid}, releasing")
+            try:
+                lock.release()
+            except RuntimeError:
+                pass
+            ctx.user_data.pop("processing_started", None)
         else:
-            await update.message.reply_text(
-                "⏳ Подождите, идет обработка предыдущего видео"
-            )
-        return
+            last = ctx.user_data.get("last_url")
+            if last == url:
+                await update.message.reply_text(
+                    "⏳ Предыдущее видео еще обрабатывается, пожалуйста подождите"
+                )
+            else:
+                await update.message.reply_text(
+                    "⏳ Подождите, идет обработка предыдущего видео"
+                )
+            return
 
     ctx.user_data["last_url"] = url
     log.info(f"Start processing for {uid}: {url}")
-    async with lock:
-        video_path: Optional[Path] = None
-        try:
-            if not is_supported_url(url):
+    acquired = False
+    try:
+        await asyncio.wait_for(lock.acquire(), timeout=5)
+        acquired = True
+    except asyncio.TimeoutError:
+        await update.message.reply_text(
+            "⚠️ Слишком много запросов. Попробуйте ещё раз позднее."
+        )
+        return
+
+    ctx.user_data["processing_started"] = now
+    video_path: Optional[Path] = None
+    try:
+        if not is_supported_url(url):
+            await update.message.reply_text(
+                "Неподдерживаемая ссылка. Пришлите Instagram Reels, TikTok или YouTube Shorts"
+            )
+            return
+
+        if uid != OWNER_ID and get_quota_usage(uid) >= FREE_LIMIT:
+            await update.message.reply_text("Бесплатный лимит исчерпан")
+            return
+
+        if "instagram.com" in url:
+            if not IG_COOKIES_CONTENT and not Path(IG_COOKIES_PATH).exists():
+                msg = "❌ Не удалось скачать видео. Не найден файл cookies для платформы Instagram."
+                log.error(msg)
+                await update.message.reply_text(msg)
+                return
+            if not IG_COOKIES_CONTENT and not is_cookie_file_readable(IG_COOKIES_PATH, "Instagram"):
                 await update.message.reply_text(
-                    "Неподдерживаемая ссылка. Пришлите Instagram Reels, TikTok или YouTube Shorts"
+                    "❌ Не удалось скачать видео. Проверьте файл cookies для Instagram."
                 )
                 return
-
-            if uid != OWNER_ID and get_quota_usage(uid) >= FREE_LIMIT:
-                await update.message.reply_text("Бесплатный лимит исчерпан")
+        elif "tiktok.com" in url:
+            if not TT_COOKIES_CONTENT and not Path(TT_COOKIES_PATH).exists():
+                msg = "❌ Не удалось скачать видео. Не найден файл cookies для платформы TikTok."
+                log.error(msg)
+                await update.message.reply_text(msg)
                 return
-
-            if "instagram.com" in url:
-                if not IG_COOKIES_CONTENT and not Path(IG_COOKIES_PATH).exists():
-                    msg = "❌ Не удалось скачать видео. Не найден файл cookies для платформы Instagram."
-                    log.error(msg)
-                    await update.message.reply_text(msg)
-                    return
-                if not IG_COOKIES_CONTENT and not is_cookie_file_readable(IG_COOKIES_PATH, "Instagram"):
-                    await update.message.reply_text(
-                        "❌ Не удалось скачать видео. Проверьте файл cookies для Instagram."
-                    )
-                    return
-            elif "tiktok.com" in url:
-                if not TT_COOKIES_CONTENT and not Path(TT_COOKIES_PATH).exists():
-                    msg = "❌ Не удалось скачать видео. Не найден файл cookies для платформы TikTok."
-                    log.error(msg)
-                    await update.message.reply_text(msg)
-                    return
-            elif "youtube.com" in url or "youtu.be" in url:
-                if not YT_COOKIES_CONTENT and not Path(YT_COOKIES_PATH).exists():
-                    msg = "❌ Не удалось скачать видео. Не найден файл cookies для платформы YouTube."
-                    log.error(msg)
-                    await update.message.reply_text(msg)
-                    return
+        elif "youtube.com" in url or "youtu.be" in url:
+            if not YT_COOKIES_CONTENT and not Path(YT_COOKIES_PATH).exists():
+                msg = "❌ Не удалось скачать видео. Не найден файл cookies для платформы YouTube."
+                log.error(msg)
+                await update.message.reply_text(msg)
+                return
 
             await update.message.reply_text("🏃 Скачиваю...")
 
@@ -554,6 +599,8 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
                         "Проверьте, пожалуйста, актуальность cookies для Instagram и загрузите новый файл."
                     )
                     log.error(f"Instagram auth error: {err}")
+                elif "cookie" in emsg or "cookies" in emsg:
+                    reason = "Куки устарели или недействительны."
                 elif "403" in emsg or "forbidden" in emsg or "login" in emsg or "sign in" in emsg:
                     reason = "Требуется вход в аккаунт."
                 else:
@@ -585,9 +632,16 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             desc = (info.get("description") or "").strip()
             need_transcript = not title and len(desc) < 20
             transcript = ""
+            t_err = None
             if need_transcript:
                 await update.message.reply_text("🤖 Распознаю речь...")
-                transcript = await transcribe_video(video_path)
+                transcript, t_err = await transcribe_video(video_path)
+                if t_err and not transcript:
+                    await update.message.reply_text(
+                        f"❌ Ошибка транскрипции: {t_err}"
+                    )
+                    log.error(f"Transcription failed for {uid}: {t_err}")
+                    return
 
             text_for_ai = transcript if transcript else f"{title}\n{desc}"
             recipe_text = await extract_recipe_from_video_text(text_for_ai)
@@ -614,13 +668,16 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             if uid != OWNER_ID:
                 increment_quota(uid)
 
-        finally:
-            if video_path:
-                tmpdir = video_path.parent
-                video_path.unlink(missing_ok=True)
-                shutil.rmtree(tmpdir, ignore_errors=True)
-            ctx.user_data.pop("last_url", None)
-            log.info(f"State reset for {uid}")
+    finally:
+        if video_path:
+            tmpdir = video_path.parent
+            video_path.unlink(missing_ok=True)
+            shutil.rmtree(tmpdir, ignore_errors=True)
+        if acquired:
+            lock.release()
+        ctx.user_data.pop("last_url", None)
+        ctx.user_data.pop("processing_started", None)
+        log.info(f"State reset for {uid}")
 # ---------------------------------------------------------------------------
 # Web server helpers
 # ---------------------------------------------------------------------------
