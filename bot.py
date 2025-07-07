@@ -13,6 +13,7 @@ import shutil
 import sqlite3
 import subprocess
 import tempfile
+from collections import defaultdict
 from pathlib import Path
 from typing import Optional, Tuple
 from urllib.parse import urlparse
@@ -33,6 +34,11 @@ from telegram.ext import (
 )
 
 BASE_DIR = Path(__file__).resolve().parent
+
+# Per-chat locks to prevent concurrent processing of multiple videos in the
+# same chat.  This avoids duplicate downloads when a user sends several links
+# quickly or resends the same link.
+chat_locks: defaultdict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
 
 
 # ---------------------------------------------------------------------------
@@ -477,119 +483,137 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     url = update.message.text.strip()
     uid = update.effective_user.id
 
-    if not is_supported_url(url):
-        await update.message.reply_text(
-            "Неподдерживаемая ссылка. Пришлите Instagram Reels, TikTok или YouTube Shorts"
-        )
-        return
-
-    if uid != OWNER_ID and get_quota_usage(uid) >= FREE_LIMIT:
-        await update.message.reply_text("Бесплатный лимит исчерпан")
-        return
-
-    if "instagram.com" in url:
-        if not IG_COOKIES_CONTENT and not Path(IG_COOKIES_PATH).exists():
-            msg = "❌ Не удалось скачать видео. Не найден файл cookies для платформы Instagram."
-            log.error(msg)
-            await update.message.reply_text(msg)
-            return
-        if not IG_COOKIES_CONTENT and not is_cookie_file_readable(IG_COOKIES_PATH, "Instagram"):
+    lock = chat_locks[uid]
+    if lock.locked():
+        last = ctx.user_data.get("last_url")
+        if last == url:
             await update.message.reply_text(
-                "❌ Не удалось скачать видео. Проверьте файл cookies для Instagram."
+                "⏳ Предыдущее видео еще обрабатывается, пожалуйста подождите"
             )
-            return
-    elif "tiktok.com" in url:
-        if not TT_COOKIES_CONTENT and not Path(TT_COOKIES_PATH).exists():
-            msg = "❌ Не удалось скачать видео. Не найден файл cookies для платформы TikTok."
-            log.error(msg)
-            await update.message.reply_text(msg)
-            return
-    elif "youtube.com" in url or "youtu.be" in url:
-        if not YT_COOKIES_CONTENT and not Path(YT_COOKIES_PATH).exists():
-            msg = "❌ Не удалось скачать видео. Не найден файл cookies для платформы YouTube."
-            log.error(msg)
-            await update.message.reply_text(msg)
-            return
-
-    await update.message.reply_text("🏃 Скачиваю...")
-
-    try:
-        video_path, info, err = await download_video(url)
-    except Exception as exc:
-        log.error(f"Download exception: {exc}", exc_info=True)
-        video_path, info, err = None, None, str(exc)
-
-    if err:
-        emsg = err.lower()
-        if "private" in emsg:
-            reason = "Видео приватное или требует входа в аккаунт."
-        elif "instagram.com" in url and (
-            "login" in emsg or "sign in" in emsg or "forbidden" in emsg or "403" in emsg or "401" in emsg
-        ):
-            reason = (
-                "Проверьте, пожалуйста, актуальность cookies для Instagram и загрузите новый файл."
+        else:
+            await update.message.reply_text(
+                "⏳ Подождите, идет обработка предыдущего видео"
             )
-            log.error(f"Instagram auth error: {err}")
-        elif "403" in emsg or "forbidden" in emsg or "login" in emsg or "sign in" in emsg:
-            reason = "Требуется вход в аккаунт."
-        else:
-            reason = err
-        await update.message.reply_text(f"❌ Не удалось скачать видео. {reason}")
         return
 
-    if not video_path or not info or not video_path.exists():
-        await update.message.reply_text(
-            "❌ Не удалось скачать видео. Возможные причины: приватное видео, требуется вход в аккаунт, видео было удалено или временные проблемы с платформой."
-        )
-        return
+    ctx.user_data["last_url"] = url
+    async with lock:
+        video_path: Optional[Path] = None
+        try:
+            if not is_supported_url(url):
+                await update.message.reply_text(
+                    "Неподдерживаемая ссылка. Пришлите Instagram Reels, TikTok или YouTube Shorts"
+                )
+                return
 
-    ffmpeg_error = compress_video_to_720p(video_path)
-    if ffmpeg_error:
-        await update.message.reply_text(
-            f"Не удалось обработать видео: {ffmpeg_error}"
-        )
-        shutil.rmtree(video_path.parent, ignore_errors=True)
-        return
+            if uid != OWNER_ID and get_quota_usage(uid) >= FREE_LIMIT:
+                await update.message.reply_text("Бесплатный лимит исчерпан")
+                return
 
-    with open(video_path, "rb") as f:
-        await update.message.reply_video(video=f)
+            if "instagram.com" in url:
+                if not IG_COOKIES_CONTENT and not Path(IG_COOKIES_PATH).exists():
+                    msg = "❌ Не удалось скачать видео. Не найден файл cookies для платформы Instagram."
+                    log.error(msg)
+                    await update.message.reply_text(msg)
+                    return
+                if not IG_COOKIES_CONTENT and not is_cookie_file_readable(IG_COOKIES_PATH, "Instagram"):
+                    await update.message.reply_text(
+                        "❌ Не удалось скачать видео. Проверьте файл cookies для Instagram."
+                    )
+                    return
+            elif "tiktok.com" in url:
+                if not TT_COOKIES_CONTENT and not Path(TT_COOKIES_PATH).exists():
+                    msg = "❌ Не удалось скачать видео. Не найден файл cookies для платформы TikTok."
+                    log.error(msg)
+                    await update.message.reply_text(msg)
+                    return
+            elif "youtube.com" in url or "youtu.be" in url:
+                if not YT_COOKIES_CONTENT and not Path(YT_COOKIES_PATH).exists():
+                    msg = "❌ Не удалось скачать видео. Не найден файл cookies для платформы YouTube."
+                    log.error(msg)
+                    await update.message.reply_text(msg)
+                    return
 
-    title = (info.get("title") or "").strip()
-    desc = (info.get("description") or "").strip()
-    need_transcript = not title and len(desc) < 20
-    transcript = ""
-    if need_transcript:
-        await update.message.reply_text("🤖 Распознаю речь...")
-        transcript = await transcribe_video(video_path)
+            await update.message.reply_text("🏃 Скачиваю...")
 
-    text_for_ai = transcript if transcript else f"{title}\n{desc}"
-    recipe_text = await extract_recipe_from_video_text(text_for_ai)
-    blocks = parse_recipe_blocks(recipe_text)
-    if not (blocks.get("title") or blocks.get("ingredients") or blocks.get("steps")):
-        if need_transcript and not transcript:
-            await update.message.reply_text("❌ Не удалось распознать речь и извлечь рецепт из видео")
-        else:
-            await update.message.reply_text("Не удалось извлечь рецепт из видео")
-    else:
-        md = format_recipe_markdown(
-            blocks,
-            original_url=info.get("webpage_url", url),
-            duration=str(int(info.get("duration", 0))) + " сек." if info.get("duration") else "",
-        )
-        await update.message.reply_text(
-            md,
-            parse_mode=constants.ParseMode.MARKDOWN_V2,
-            disable_web_page_preview=True,
-        )
+            try:
+                video_path, info, err = await download_video(url)
+            except Exception as exc:
+                log.error(f"Download exception: {exc}", exc_info=True)
+                video_path, info, err = None, None, str(exc)
 
-    if uid != OWNER_ID:
-        increment_quota(uid)
+            if err:
+                emsg = err.lower()
+                if "private" in emsg:
+                    reason = "Видео приватное или требует входа в аккаунт."
+                elif "instagram.com" in url and (
+                    "login" in emsg or "sign in" in emsg or "forbidden" in emsg or "403" in emsg or "401" in emsg
+                ):
+                    reason = (
+                        "Проверьте, пожалуйста, актуальность cookies для Instagram и загрузите новый файл."
+                    )
+                    log.error(f"Instagram auth error: {err}")
+                elif "403" in emsg or "forbidden" in emsg or "login" in emsg or "sign in" in emsg:
+                    reason = "Требуется вход в аккаунт."
+                else:
+                    reason = err
+                await update.message.reply_text(f"❌ Не удалось скачать видео. {reason}")
+                return
 
-    tmpdir = video_path.parent
-    video_path.unlink(missing_ok=True)
-    shutil.rmtree(tmpdir, ignore_errors=True)
+            if not video_path or not info or not video_path.exists():
+                await update.message.reply_text(
+                    "❌ Не удалось скачать видео. Возможные причины: приватное видео, требуется вход в аккаунт, видео было удалено или временные проблемы с платформой."
+                )
+                return
 
+            ffmpeg_error = compress_video_to_720p(video_path)
+            if ffmpeg_error:
+                await update.message.reply_text(
+                    f"Не удалось обработать видео: {ffmpeg_error}"
+                )
+                shutil.rmtree(video_path.parent, ignore_errors=True)
+                return
 
+            with open(video_path, "rb") as f:
+                await update.message.reply_video(video=f)
+
+            title = (info.get("title") or "").strip()
+            desc = (info.get("description") or "").strip()
+            need_transcript = not title and len(desc) < 20
+            transcript = ""
+            if need_transcript:
+                await update.message.reply_text("🤖 Распознаю речь...")
+                transcript = await transcribe_video(video_path)
+
+            text_for_ai = transcript if transcript else f"{title}\n{desc}"
+            recipe_text = await extract_recipe_from_video_text(text_for_ai)
+            blocks = parse_recipe_blocks(recipe_text)
+            if not (blocks.get("title") or blocks.get("ingredients") or blocks.get("steps")):
+                if need_transcript and not transcript:
+                    await update.message.reply_text("❌ Не удалось распознать речь и извлечь рецепт из видео")
+                else:
+                    await update.message.reply_text("Не удалось извлечь рецепт из видео")
+            else:
+                md = format_recipe_markdown(
+                    blocks,
+                    original_url=info.get("webpage_url", url),
+                    duration=str(int(info.get("duration", 0))) + " сек." if info.get("duration") else "",
+                )
+                await update.message.reply_text(
+                    md,
+                    parse_mode=constants.ParseMode.MARKDOWN_V2,
+                    disable_web_page_preview=True,
+                )
+
+            if uid != OWNER_ID:
+                increment_quota(uid)
+
+        finally:
+            if video_path:
+                tmpdir = video_path.parent
+                video_path.unlink(missing_ok=True)
+                shutil.rmtree(tmpdir, ignore_errors=True)
+            ctx.user_data.pop("last_url", None)
 # ---------------------------------------------------------------------------
 # Web server helpers
 # ---------------------------------------------------------------------------
