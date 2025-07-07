@@ -452,7 +452,7 @@ async def cmd_status(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     uid = update.effective_user.id
     used = get_quota_usage(uid)
     if uid == OWNER_ID:
-        text = "👑 Вы владелец бота \- лимитов нет"
+        text = "👑 Вы владелец бота - лимитов нет"
     else:
         text = f"Использовано: {used}/{FREE_LIMIT}"
     await update.message.reply_text(text)
